@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Swift Package Manager
+.build/
+
+# Xcode
+xcuserdata/
+*.xcodeproj
+
+# Calgary sample site build output
+build/
+
+# Node (sample site's CSS build)
+node_modules/

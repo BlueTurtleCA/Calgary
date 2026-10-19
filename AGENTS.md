@@ -1,0 +1,205 @@
+# AGENTS.md — Calgary
+
+Guidance for AI agents (and humans) working in this repository.
+
+## What this project is
+
+**Calgary** is a custom static site generator, distributed as a Swift package with a **library product**: downstream projects add Calgary as a dependency, `import Calgary`, and write their own pipeline — a `Main.swift` file in an executable target that declares the build steps (copy assets, build CSS, register templates, render pages, open the result). Content and templates are plain files (markdown + HTML); the **build pipeline itself is Swift code**.
+
+This repo contains two things:
+- **The library** (`Sources/Calgary/`) — the importable SSG.
+- **A sample site** (`Sources/Example/`) — the "Blue Turtle Canada" demo that uses the library. Its content (`content/`, `templates/`, `components/`, `assets/`) lives next to its pipeline file (`Main.swift`). It is the reference example of how downstream projects use Calgary, and doubles as an integration test. Running the `Calgary-Package` scheme's run action (or `swift run Example` from the package root) produces `Sources/Example/build/` and opens the site in a browser.
+
+Design intent (deliberate distinctions):
+- **Not Ignite** — HTML is not generated from Swift code; Swift only orchestrates the build.
+- **Not Hugo/Jekyll** — the pipeline is not driven by config files; it is Swift code in the repo.
+- **Files** = what a writer edits (pages, components, templates, assets).
+- **Swift** = how the site is assembled (the pipeline).
+
+## Package layout
+
+```
+Calgary/
+├── Package.swift                             # declares the "Calgary" library product
+├── Sources/
+│   ├── Calgary/                              # the importable SSG library (the product)
+│   │   ├── Site.swift                        # builder API + build orchestration
+│   │   ├── Steps/
+│   │   │   ├── BuildStep.swift               # step protocol + BuildError
+│   │   │   ├── CopyAssetsStep.swift
+│   │   │   ├── ExecuteCommandStep.swift      # run external commands (CSS build, etc.)
+│   │   │   ├── RenderPagesStep.swift         # frontmatter + engine + markdown → HTML
+│   │   │   └── OpenSiteStep.swift            # opens a built page (Apple platforms)
+│   │   ├── Support/                          # abstractions over system capabilities
+│   │   │   ├── FileSystem.swift              # file-system protocol + local implementation
+│   │   │   └── CommandRunner.swift           # command-execution protocol + Process implementation
+│   │   ├── Engine/
+│   │   │   ├── TemplateEngine.swift          # {{ var }} interpolation + includes
+│   │   │   ├── Variables.swift               # dot-notation variable context
+│   │   │   └── ComponentResolver.swift       # lookup, recursion, cycle detection
+│   │   ├── Localization/
+│   │   │   ├── Localization.swift            # locale configuration (Site.localize)
+│   │   │   └── StringTable.swift             # YAML or .xcstrings strings + fallback
+│   │   ├── Frontmatter/Frontmatter.swift     # YAML split + parse (Yams)
+│   │   └── Markdown/MarkdownRenderer.swift   # swift-markdown wrapper
+│   └── Example/                              # sample site executable (demo, not a product)
+│       ├── Main.swift                        # the sample site's pipeline file
+│       ├── package.json                      # tailwindcss + @tailwindcss/cli (npm)
+│       ├── content/ templates/ components/ assets/ strings/
+│       └── build/                            # generated output (gitignored)
+└── Tests/Calgary/
+    ├── SiteTests.swift
+    ├── TestHelpers.swift
+    ├── Engine/
+    │   ├── ComponentResolverTests.swift
+    │   ├── TemplateEngineTests.swift
+    │   └── VariablesTests.swift
+    ├── Frontmatter/FrontmatterTests.swift
+    ├── Localization/StringTableTests.swift
+    ├── Markdown/MarkdownRendererTests.swift
+    ├── Steps/                                # step tests (in-memory file system + mock runner)
+    │   ├── CopyAssetsStepTests.swift
+    │   ├── ExecuteCommandStepTests.swift
+    │   ├── OpenSiteStepTests.swift
+    │   └── RenderPagesStepTests.swift
+    └── Support/
+        ├── InMemoryFileSystem.swift          # in-memory FileSystem for tests
+        ├── MockCommandRunner.swift           # scripted CommandRunner for tests
+        └── ProcessCommandRunnerTests.swift   # real-runner tests (echo/sh/pwd, no file writes)
+```
+
+## Content model
+
+### Pages (`content/*.md`)
+
+Markdown with YAML frontmatter:
+
+```markdown
+---
+template: home
+variables:
+  title: Blue Turtle Canada
+---
+
+Hi, welcome to {{ title }}!
+
+{% include "components/hero" %}
+```
+
+### Localization
+
+Declared in the pipeline with `Site.localize(defaultLocale:locales:strings:)`. A page whose file name ends in `.<locale>.md` for a declared non-default locale is a translation, written under a `/<locale>/` subfolder in the output (the default locale stays at the root). Strings come from per-locale YAML files or an Xcode `.xcstrings` catalog (pointed at by `strings:`), exposed to templates and components as `{{ strings.… }}`, falling back to the default locale.
+
+### Templates (`templates/*.html`)
+
+HTML with slots:
+
+```html
+<!doctype html>
+<html>
+<head><title>{{ title }}</title><link rel="stylesheet" href="/css/site.css"></head>
+<body>
+  {% include "components/header" %}
+  <main>{{ content }}</main>
+  {% include "components/footer" %}
+</body>
+</html>
+```
+
+### Components (`components/*`)
+
+Markdown (`.md`) or raw HTML (`.html`) partials. They may use variables and include other components. Resolution order: `hero.md` → `hero.html` → `hero` (no extension).
+
+### Template syntax
+
+- `{{ variable }}` — interpolation (dot notation supported: `{{ site.name }}`)
+- `{% include "path" %}` — component/template include
+
+Single-brace shorthand (`{title}`, `{components/hero}`) was considered but rejected: single braces collide with markdown, JSON, and CSS in real content. If the exact shorthand is ever wanted, it is a one-regex change in `TemplateEngine`.
+
+## Pipeline file (the user-facing API)
+
+This is the API downstream projects use. The file below is the *sample site's* pipeline; a downstream project writes its own equivalent in its own executable target, pointing at its own content.
+
+```swift
+// File: Sources/Example/Main.swift (sample site)
+import Calgary
+import Foundation
+
+@main
+struct Main {
+    static func main() throws {
+        // The sample site's files (content, templates, components, assets)
+        // live in this directory, so the site's root is here rather than
+        // the package root.
+        let site = Site(
+            name: "Blue Turtle Canada",
+            source: "content",
+            output: "build",
+            root: URL(fileURLWithPath: "Sources/Example")
+        )
+        .copyAssets(from: "assets")
+        // Build the site's CSS with Tailwind. `--yes` lets npx install
+        // the CLI on first run without an interactive prompt.
+        .executeCommand(
+            "npx",
+            arguments: ["--yes", "@tailwindcss/cli",
+                        "-i", "assets/css/input.css",
+                        "-o", "build/css/site.css"],
+            input: "assets/css/input.css",
+            output: "build/css/site.css"
+        )
+        .registerTemplates(in: "templates")
+        .registerComponents(in: "components")
+        .renderPages()
+        .open("index.html")
+
+        do {
+            try site.build()
+            print("Build complete: \(site.outputDirectory.path)")
+        } catch {
+            print("Build failed: \(error)")
+            exit(1)
+        }
+    }
+}
+```
+
+## Library design
+
+- **Public API surface**: `Site` and its builder methods (plus `build()`) are the public API. `BuildStep`, `BuildError`, `FileSystem`, `LocalFileSystem`, `CommandRunner`, `CommandResult`, and `ProcessCommandRunner` are also public so downstream projects can write custom steps and tests. Everything else — engine, frontmatter, steps — stays `internal`.
+- **Path resolution**: the `Site` API takes relative paths (`source: "content"`, `output: "build"`); they resolve against `root`, which defaults to the current working directory (the consumer's project root when they run their executable).
+- **Sample is not API**: the `Example` executable and the demo content directories exist to demonstrate and integration-test the library; they are not shipped as a product and must not be treated as part of the public API.
+
+## Per-page render flow
+
+1. Read the page, split frontmatter (Yams) → `template`, `date`, variables.
+2. Merge variables: built-ins (`site.name`, `page.url`, `page.date` when declared; `page.locale`, `site.defaultLocale`, `page.alternates` when localized) + frontmatter (frontmatter wins) + the page's locale strings under `strings` (when localized).
+3. Resolve `{% include %}`s recursively. Markdown components render to HTML first, then pass through the template engine (so components can nest and use variables). Cycle detection via a resolution stack.
+4. Render remaining markdown → HTML via swift-markdown, with smart punctuation disabled so quotes and template tags pass through literally.
+5. Inject as `{{ content }}` into the template, interpolate, write output. Path mirrors source: `blog/post.md` → `build/blog/post.html`.
+
+## Dependencies
+
+| Package | Why |
+|---|---|
+| `swiftlang/swift-markdown` | GFM markdown → HTML, Apple-maintained |
+| `jpsim/Yams` | Frontmatter YAML |
+
+The sample site additionally needs Node: `tailwindcss` and `@tailwindcss/cli` are declared in `Sources/Example/package.json`. After cloning, run `npm install` in `Sources/Example` once; the pipeline then runs the CLI via `npx`.
+
+Deliberately **no** Stencil/Handlebars: a custom engine with interpolation + includes is ~200 lines, matches the syntax exactly, and avoids a full engine we'd only use 10% of. `{% if %}`/`{% for %}` (if ever needed) is a contained extension to the same engine.
+
+## Working in this repo
+
+- **Build**: the `Calgary-Package` Xcode scheme, or `swift build`.
+- **Test**: `swift test` (or the scheme's test action). Tests use the swift-testing framework and run against `InMemoryFileSystem`/`MockCommandRunner`; `ProcessCommandRunnerTests` exercise the real runner with harmless commands.
+- **Run the sample**: `swift run Example` from the package root (requires the one-time `npm install` above; the sample resolves its content relative to the current working directory). It rebuilds `Sources/Example/build/` from scratch and opens `index.html` in a browser.
+- `build/` and `node_modules/` are gitignored.
+
+## Conventions
+
+- Swift 6 language mode, `async/await` over Combine, `@MainActor` for UI-bound code (n/a for this CLI, but keep types `Sendable`-friendly).
+- Unit tests use the **Testing** framework (`import Testing`), not XCTest.
+- Naming: PascalCase for types, camelCase for properties/methods; 4-space indentation.
+- No force unwrapping; avoid adding dependencies beyond the table above.
