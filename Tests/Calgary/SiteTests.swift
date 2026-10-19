@@ -78,7 +78,7 @@ struct SiteTests {
 
         #expect(site.steps.count == 1)
         #expect(site.steps.first is RenderPagesStep)
-        #expect(site.steps.first?.name == "Render pages matching '**/*.md'")
+        #expect(site.steps.first?.name == "Render pages matching '**/*.{md,html}'")
     }
 
     @Test("open adds a step that opens index.html by default")

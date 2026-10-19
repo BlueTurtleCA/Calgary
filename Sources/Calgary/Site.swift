@@ -184,10 +184,10 @@ public final class Site {
     /// content/index.fr-fr.md  →  build/fr-fr/index.html
     /// ```
     ///
-    /// A page file is a translation when its name ends in `.<locale>.md` for a
-    /// declared non-default locale. When `strings` is set, the active locale's
-    /// strings (falling back to the default locale) are exposed to templates
-    /// and components as `{{ strings.… }}`.
+    /// A page file is a translation when its name ends in `.<locale>.md` or
+    /// `.<locale>.html` for a declared non-default locale. When `strings` is
+    /// set, the active locale's strings (falling back to the default locale)
+    /// are exposed to templates and components as `{{ strings.… }}`.
     ///
     /// - Parameters:
     ///   - defaultLocale: The site's default (fallback) locale, for example `"en"`.
@@ -209,14 +209,16 @@ public final class Site {
         return self
     }
 
-    /// Adds a step that renders markdown pages into HTML.
+    /// Adds a step that renders pages into HTML.
     ///
-    /// Pages are markdown files with YAML frontmatter, found by `glob` under
-    /// the site's source directory. Each page is rendered into its registered
-    /// template and written to the output directory, mirroring its source
-    /// path: `content/blog/post.md` becomes `build/blog/post.html`.
+    /// Pages are found by `glob` under the site's source directory. Markdown
+    /// pages (`.md`) have YAML frontmatter and are rendered into their
+    /// registered template; HTML pages (`.html`) are standalone documents
+    /// rendered by the template engine without markdown conversion. Each page
+    /// is written to the output directory, mirroring its source path:
+    /// `content/blog/post.md` becomes `build/blog/post.html`.
     @discardableResult
-    public func renderPages(glob: String = "**/*.md") -> Site {
+    public func renderPages(glob: String = "**/*.{md,html}") -> Site {
         addStep(RenderPagesStep(glob: glob))
     }
 

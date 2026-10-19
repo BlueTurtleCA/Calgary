@@ -1,22 +1,30 @@
 import Foundation
 
-/// A build step that renders markdown pages into HTML.
+/// A build step that renders pages into HTML.
 ///
-/// Each page is a markdown file with YAML frontmatter declaring its template
-/// and variables. The page's body is rendered — includes resolved, variables
-/// interpolated, markdown converted to HTML — and injected into the template
-/// as `{{ content }}`. The output path mirrors the source path:
-/// `content/blog/post.md` becomes `build/blog/post.html`.
+/// Markdown pages are markdown files with YAML frontmatter declaring their
+/// template and variables. The page's body is rendered — includes resolved,
+/// variables interpolated, markdown converted to HTML — and injected into
+/// the template as `{{ content }}`.
+///
+/// HTML pages are standalone documents: they are rendered by the template
+/// engine (includes resolved, variables interpolated) but not converted from
+/// markdown or wrapped in a template. Their frontmatter is optional.
+///
+/// The output path mirrors the source path: `content/blog/post.md` becomes
+/// `build/blog/post.html`, and `content/about.html` becomes
+/// `build/about.html`.
 ///
 /// When the site is localized, a page whose file name ends in `.<locale>.md`
-/// for a declared non-default locale is a translation: it is written under a
-/// subfolder named after the locale, with the locale suffix removed:
-/// `content/blog/post.fr-fr.md` becomes `build/fr-fr/blog/post.html`.
+/// or `.<locale>.html` for a declared non-default locale is a translation:
+/// it is written under a subfolder named after the locale, with the locale
+/// suffix removed: `content/blog/post.fr-fr.md` becomes
+/// `build/fr-fr/blog/post.html`.
 struct RenderPagesStep: BuildStep {
     /// The glob of page files to render, relative to the source directory.
     let glob: String
 
-    init(glob: String = "**/*.md") {
+    init(glob: String = "**/*.{md,html}") {
         self.glob = glob
     }
 
@@ -25,13 +33,6 @@ struct RenderPagesStep: BuildStep {
     }
 
     func run(site: Site) throws {
-        guard let templatesDirectory = site.templatesDirectory else {
-            throw BuildError.missingConfiguration("renderPages requires registerTemplates(in:)")
-        }
-        let templatesURL = site.root.appendingPathComponent(templatesDirectory)
-        guard site.fileSystem.fileExists(atPath: templatesURL.path) else {
-            throw BuildError.missingPath(templatesURL.path)
-        }
         if let componentsDirectory = site.componentsDirectory {
             let componentsURL = site.root.appendingPathComponent(componentsDirectory)
             guard site.fileSystem.fileExists(atPath: componentsURL.path) else {
@@ -48,7 +49,23 @@ struct RenderPagesStep: BuildStep {
         let renderer = MarkdownRenderer()
         let stringTable = try loadStringTable(for: site)
 
-        for pageURL in try pageFiles(in: sourceURL, glob: glob, fileSystem: site.fileSystem) {
+        let pages = try pageFiles(in: sourceURL, glob: glob, fileSystem: site.fileSystem)
+
+        // Markdown pages render into a registered template, so templates are
+        // required only when the site has any of them.
+        var templatesURL: URL?
+        if pages.contains(where: { !$0.path.hasSuffix(".html") }) {
+            guard let templatesDirectory = site.templatesDirectory else {
+                throw BuildError.missingConfiguration("renderPages requires registerTemplates(in:)")
+            }
+            let url = site.root.appendingPathComponent(templatesDirectory)
+            guard site.fileSystem.fileExists(atPath: url.path) else {
+                throw BuildError.missingPath(url.path)
+            }
+            templatesURL = url
+        }
+
+        for pageURL in pages {
             try renderPage(
                 at: pageURL,
                 site: site,
@@ -66,7 +83,7 @@ struct RenderPagesStep: BuildStep {
     private func renderPage(
         at pageURL: URL,
         site: Site,
-        templatesURL: URL,
+        templatesURL: URL?,
         engine: TemplateEngine,
         resolver: ComponentResolver,
         renderer: MarkdownRenderer,
@@ -74,7 +91,8 @@ struct RenderPagesStep: BuildStep {
     ) throws {
         let data = try site.fileSystem.read(contentsOf: pageURL)
         let text = String(data: data, encoding: .utf8) ?? ""
-        let page = try Frontmatter.parse(text)
+        let isHTMLPage = pageURL.path.hasSuffix(".html")
+        let page = isHTMLPage ? try Frontmatter.parseHTML(text) : try Frontmatter.parse(text)
 
         let relative = relativePath(of: pageURL, to: site.sourceDirectory)
         let locale = Self.locale(of: relative, in: site.localization)
@@ -95,14 +113,23 @@ struct RenderPagesStep: BuildStep {
             variables = variables.merged(with: stringTable.variables(for: locale))
         }
 
-        // Render the body: resolve includes and interpolate variables, then
-        // convert the remaining markdown to HTML.
+        // Render the body: resolve includes and interpolate variables.
+        // Markdown pages are then converted to HTML; HTML pages are already
+        // HTML.
         let bodyWithIncludes = try engine.render(page.body, variables: variables, resolver: resolver)
-        let bodyHTML = renderer.render(bodyWithIncludes)
-        variables = variables.merged(with: Variables(["content": .string(bodyHTML)]))
+        let bodyHTML = isHTMLPage ? bodyWithIncludes : renderer.render(bodyWithIncludes)
 
-        let template = try loadTemplate(named: page.template, in: templatesURL, fileSystem: site.fileSystem)
-        let html = try engine.render(template, variables: variables, resolver: resolver)
+        let html: String
+        if let templateName = page.template {
+            guard let templatesURL else {
+                throw BuildError.missingConfiguration("renderPages requires registerTemplates(in:)")
+            }
+            variables = variables.merged(with: Variables(["content": .string(bodyHTML)]))
+            let template = try loadTemplate(named: templateName, in: templatesURL, fileSystem: site.fileSystem)
+            html = try engine.render(template, variables: variables, resolver: resolver)
+        } else {
+            html = bodyHTML
+        }
 
         let outputURL = site.outputDirectory.appendingPathComponent(outputRelative)
         try site.fileSystem.createDirectory(
@@ -165,13 +192,13 @@ struct RenderPagesStep: BuildStep {
     /// Determines a page's locale from its path, relative to the source
     /// directory.
     ///
-    /// A page is a translation when its file name ends in `.<locale>.md` for
-    /// a declared non-default locale; otherwise it belongs to the default
-    /// locale.
+    /// A page is a translation when its file name ends in `.<locale>.md` or
+    /// `.<locale>.html` for a declared non-default locale; otherwise it
+    /// belongs to the default locale.
     private static func locale(of relative: String, in localization: Localization?) -> String {
         guard let localization else { return "default" }
         let fileName = relative.split(separator: "/").last.map(String.init) ?? relative
-        let base = fileName.hasSuffix(".md") ? String(fileName.dropLast(3)) : fileName
+        let base = Self.baseName(of: fileName)
         for locale in localization.locales where locale != localization.defaultLocale {
             if base.hasSuffix("." + locale) {
                 return locale
@@ -180,18 +207,37 @@ struct RenderPagesStep: BuildStep {
         return localization.defaultLocale
     }
 
+    /// Strips a page's extension from a file name or relative path:
+    /// `post.md` and `post.html` both become `post`.
+    private static func baseName(of path: String) -> String {
+        if path.hasSuffix(".md") {
+            return String(path.dropLast(3))
+        }
+        if path.hasSuffix(".html") {
+            return String(path.dropLast(5))
+        }
+        return path
+    }
+
     /// The output path, relative to the output directory, for a page.
     ///
     /// Default-locale pages mirror their source path: `blog/post.md` becomes
-    /// `blog/post.html`. Translations are written under a subfolder named
-    /// after the locale, with the locale suffix removed:
-    /// `blog/post.fr-fr.md` becomes `fr-fr/blog/post.html`.
+    /// `blog/post.html`, and `about.html` stays `about.html`. Translations
+    /// are written under a subfolder named after the locale, with the locale
+    /// suffix removed: `blog/post.fr-fr.md` becomes `fr-fr/blog/post.html`.
     private static func outputPath(for relative: String, locale: String, defaultLocale: String) -> String {
-        let suffix = "." + locale + ".md"
-        if locale != defaultLocale, relative.hasSuffix(suffix) {
-            return locale + "/" + String(relative.dropLast(suffix.count)) + ".html"
+        if locale != defaultLocale {
+            for ext in [".md", ".html"] {
+                let suffix = "." + locale + ext
+                if relative.hasSuffix(suffix) {
+                    return locale + "/" + String(relative.dropLast(suffix.count)) + ".html"
+                }
+            }
         }
-        return relative.hasSuffix(".md") ? String(relative.dropLast(3)) + ".html" : relative + ".html"
+        if relative.hasSuffix(".md") {
+            return String(relative.dropLast(3)) + ".html"
+        }
+        return relative
     }
 
     /// Builds the `<link rel="alternate" hreflang="…">` tags for a page: one
@@ -207,7 +253,7 @@ struct RenderPagesStep: BuildStep {
         guard let localization = site.localization else { return nil }
 
         // The page's path without its extension and any locale suffix.
-        var base = sourceRelative.hasSuffix(".md") ? String(sourceRelative.dropLast(3)) : sourceRelative
+        var base = Self.baseName(of: sourceRelative)
         if locale != defaultLocale {
             let suffix = "." + locale
             if base.hasSuffix(suffix) {
@@ -218,17 +264,19 @@ struct RenderPagesStep: BuildStep {
         var links: [String] = []
         var defaultURL: String?
         for alternate in localization.locales {
-            let (sourceFile, url): (String, String)
+            let (sourceFiles, url): ([String], String)
             if alternate == defaultLocale {
-                sourceFile = base + ".md"
+                sourceFiles = [base + ".md", base + ".html"]
                 url = "/" + base + ".html"
             } else {
-                sourceFile = base + "." + alternate + ".md"
+                sourceFiles = [base + "." + alternate + ".md", base + "." + alternate + ".html"]
                 url = "/" + alternate + "/" + base + ".html"
             }
-            guard site.fileSystem.fileExists(
-                atPath: site.sourceDirectory.appendingPathComponent(sourceFile).path
-            ) else { continue }
+            guard sourceFiles.contains(where: {
+                site.fileSystem.fileExists(
+                    atPath: site.sourceDirectory.appendingPathComponent($0).path
+                )
+            }) else { continue }
             links.append("<link rel=\"alternate\" hreflang=\"\(alternate)\" href=\"\(url)\">")
             if alternate == defaultLocale {
                 defaultURL = url
@@ -297,8 +345,17 @@ struct RenderPagesStep: BuildStep {
     }
 
     /// Matches a relative path against a glob. Supports `*` (any characters
-    /// except `/`) and `**/` (any number of directories, including none).
+    /// except `/`), `**/` (any number of directories, including none), and
+    /// `{a,b}` (alternation).
     private func matches(glob: String, path: String) -> Bool {
+        guard let pattern = Self.globPattern(from: glob) else { return false }
+        guard let regex = try? NSRegularExpression(pattern: "^" + pattern + "$") else { return false }
+        return regex.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)) != nil
+    }
+
+    /// Converts a glob into a regular-expression pattern, or `nil` if the
+    /// glob is malformed (an unterminated `{`).
+    private static func globPattern(from glob: String) -> String? {
         var pattern = ""
         var index = glob.startIndex
         while index < glob.endIndex {
@@ -315,6 +372,15 @@ struct RenderPagesStep: BuildStep {
                 } else {
                     pattern += "[^/]*"
                 }
+            } else if character == "{" {
+                guard let close = glob[index...].firstIndex(of: "}") else { return nil }
+                let alternatives = glob[glob.index(after: index)..<close]
+                    .split(separator: ",")
+                    .compactMap { globPattern(from: String($0)) }
+                guard !alternatives.isEmpty else { return nil }
+                pattern += "(?:" + alternatives.joined(separator: "|") + ")"
+                index = glob.index(after: close)
+                continue
             } else if ".\\+?()[]{}^$|".contains(character) {
                 pattern += "\\" + String(character)
             } else {
@@ -322,7 +388,6 @@ struct RenderPagesStep: BuildStep {
             }
             index = glob.index(after: index)
         }
-        guard let regex = try? NSRegularExpression(pattern: "^" + pattern + "$") else { return false }
-        return regex.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)) != nil
+        return pattern
     }
 }

@@ -275,6 +275,109 @@ struct RenderPagesStepTests {
         #expect(try readFile(at: "build/nested/page.html", relativeTo: virtualRoot, in: fileSystem) != nil)
     }
 
+    @Test("Renders an HTML page standalone, without markdown or a template")
+    func rendersHTMLPageStandalone() throws {
+        let fileSystem = InMemoryFileSystem()
+        try writeFile(
+            """
+            ---
+            variables:
+              title: Hello
+            ---
+            <!doctype html>
+            <html>
+            <head><title>{{ title }}</title></head>
+            <body>
+            {% include "components/header" %}
+            <main>
+            **not markdown**
+            </main>
+            </body>
+            </html>
+            """,
+            at: "content/index.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "<header>{{ site.name }}</header>",
+            at: "components/header.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        let output = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output != nil)
+        #expect(output?.contains("<title>Hello</title>") == true)
+        #expect(output?.contains("<header>Test Site</header>") == true)
+        #expect(output?.contains("**not markdown**") == true)
+    }
+
+    @Test("Mirrors the source path for HTML pages")
+    func mirrorsSourcePathForHTMLPages() throws {
+        let fileSystem = InMemoryFileSystem()
+        try writeFile(
+            "<html><body>Nested</body></html>",
+            at: "content/nested/page.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .renderPages()
+
+        try site.build()
+
+        #expect(try readFile(at: "build/nested/page.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        #expect(try readFile(at: "build/nested/page.html.html", relativeTo: virtualRoot, in: fileSystem) == nil)
+    }
+
+    @Test("Throws when an HTML page declares a template")
+    func throwsWhenHTMLPageDeclaresTemplate() throws {
+        let fileSystem = InMemoryFileSystem()
+        try writeFile(
+            "---\ntemplate: home\n---\n<html></html>",
+            at: "content/index.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+
+        #expect(throws: FrontmatterError.templateNotAllowedInHTMLPage) {
+            try RenderPagesStep(glob: "**/*.{md,html}").run(site: site)
+        }
+    }
+
+    @Test("A glob can restrict which pages render")
+    func globRestrictsWhichPagesRender() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            "<html><body>Raw</body></html>",
+            at: "content/raw.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages(glob: "**/*.md")
+
+        try site.build()
+
+        #expect(try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        #expect(try readFile(at: "build/raw.html", relativeTo: virtualRoot, in: fileSystem) == nil)
+    }
+
     @Test("Writes translations under a locale subfolder")
     func writesTranslationsUnderLocaleSubfolder() throws {
         let fileSystem = InMemoryFileSystem()
@@ -298,6 +401,33 @@ struct RenderPagesStepTests {
             .localize(defaultLocale: "en", locales: ["fr-fr"])
             .registerTemplates(in: "templates")
             .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        #expect(try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        #expect(try readFile(at: "build/fr-fr/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        #expect(try readFile(at: "build/fr-fr/index.fr-fr.html", relativeTo: virtualRoot, in: fileSystem) == nil)
+    }
+
+    @Test("Writes HTML translations under a locale subfolder")
+    func writesHTMLTranslationsUnderLocaleSubfolder() throws {
+        let fileSystem = InMemoryFileSystem()
+        try writeFile(
+            "<html><body>EN</body></html>",
+            at: "content/index.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "<html><body>FR</body></html>",
+            at: "content/index.fr-fr.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .localize(defaultLocale: "en", locales: ["fr-fr"])
             .renderPages()
 
         try site.build()
@@ -416,6 +546,34 @@ struct RenderPagesStepTests {
         #expect(output?.contains("<link rel=\"alternate\" hreflang=\"fr-fr\" href=\"/fr-fr/index.html\">") == true)
         #expect(output?.contains("<link rel=\"alternate\" hreflang=\"x-default\" href=\"/index.html\">") == true)
         #expect(output?.contains("hreflang=\"de\"") == false)
+    }
+
+    @Test("Emits hreflang alternates for HTML pages")
+    func emitsHreflangAlternatesForHTMLPages() throws {
+        let fileSystem = InMemoryFileSystem()
+        try writeFile(
+            "<html><head>{{ page.alternates }}</head><body>EN</body></html>",
+            at: "content/index.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "<html><body>FR</body></html>",
+            at: "content/index.fr-fr.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .localize(defaultLocale: "en", locales: ["fr-fr"])
+            .renderPages()
+
+        try site.build()
+
+        let output = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"en\" href=\"/index.html\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"fr-fr\" href=\"/fr-fr/index.html\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"x-default\" href=\"/index.html\">") == true)
     }
 
     @Test("Resolves localized strings with fallback to the default locale")

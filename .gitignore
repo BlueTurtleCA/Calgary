@@ -13,3 +13,6 @@ build/
 
 # Node (sample site's CSS build)
 node_modules/
+
+# TerrapinPilot
+.terrapinpilot/

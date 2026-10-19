@@ -115,4 +115,40 @@ struct FrontmatterTests {
             try Frontmatter.parse("---\n- just\n- a\n- list\n---\nBody")
         }
     }
+
+    @Test("Parses an HTML page without frontmatter")
+    func parsesHTMLPageWithoutFrontmatter() throws {
+        let page = try Frontmatter.parseHTML("<html><body>Hello</body></html>")
+
+        #expect(page.template == nil)
+        #expect(page.date == nil)
+        #expect(page.variables["title"] == nil)
+        #expect(page.body == "<html><body>Hello</body></html>")
+    }
+
+    @Test("Parses an HTML page's optional frontmatter")
+    func parsesHTMLPageWithFrontmatter() throws {
+        let page = try Frontmatter.parseHTML(
+            """
+            ---
+            date: 2026-01-01
+            variables:
+              title: Hello
+            ---
+            <html><body>{{ title }}</body></html>
+            """
+        )
+
+        #expect(page.template == nil)
+        #expect(page.date == "2026-01-01")
+        #expect(page.variables["title"] == .string("Hello"))
+        #expect(page.body == "<html><body>{{ title }}</body></html>")
+    }
+
+    @Test("Throws when an HTML page declares a template")
+    func throwsWhenHTMLPageDeclaresTemplate() {
+        #expect(throws: FrontmatterError.templateNotAllowedInHTMLPage) {
+            try Frontmatter.parseHTML("---\ntemplate: home\n---\n<html></html>")
+        }
+    }
 }

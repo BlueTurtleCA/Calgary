@@ -4,12 +4,14 @@ import Yams
 /// A page's parsed frontmatter and body.
 struct Page: Equatable {
     /// The name of the template to render the page with.
-    let template: String
+    ///
+    /// `nil` for standalone HTML pages, which are their own document.
+    let template: String?
     /// The page's date, if declared in the frontmatter.
     let date: String?
     /// Variables declared in the frontmatter.
     let variables: Variables
-    /// The page's markdown body.
+    /// The page's body.
     let body: String
 }
 
@@ -23,6 +25,8 @@ enum FrontmatterError: Error, Equatable, CustomStringConvertible {
     case invalidYAML(String)
     /// The frontmatter does not declare a `template`.
     case missingTemplate
+    /// An HTML page declared a `template`, but HTML pages are standalone.
+    case templateNotAllowedInHTMLPage
 
     var description: String {
         switch self {
@@ -34,13 +38,15 @@ enum FrontmatterError: Error, Equatable, CustomStringConvertible {
             return "Frontmatter is not valid YAML: \(detail)"
         case .missingTemplate:
             return "Frontmatter is missing a 'template'"
+        case .templateNotAllowedInHTMLPage:
+            return "HTML pages are standalone documents and cannot declare a 'template'"
         }
     }
 }
 
 /// Splits and parses a page's YAML frontmatter.
 enum Frontmatter {
-    /// Parses `text` into a page.
+    /// Parses `text` into a markdown page.
     ///
     /// The text must start with a `---` line, followed by YAML, followed by a
     /// closing `---` line. The YAML must declare a `template`; it may declare
@@ -48,42 +54,67 @@ enum Frontmatter {
     /// the page's body.
     static func parse(_ text: String) throws -> Page {
         let (yaml, body) = try split(text)
-        guard let node = try Yams.compose(yaml: yaml) else {
+        let page = try page(fromYAML: yaml, body: body)
+        guard page.template != nil else {
             throw FrontmatterError.missingTemplate
         }
-        guard case .mapping(let mapping) = node else {
-            throw FrontmatterError.invalidYAML("the frontmatter must be a YAML mapping")
-        }
+        return page
+    }
 
+    /// Parses `text` into an HTML page.
+    ///
+    /// HTML pages are standalone documents — they are their own template — so
+    /// frontmatter is optional. When present, it may declare a `date` and a
+    /// `variables` map, but not a `template`.
+    static func parseHTML(_ text: String) throws -> Page {
+        let lines = text.components(separatedBy: "\n")
+        guard let first = lines.first, first.trimmingCharacters(in: .whitespaces) == "---" else {
+            return Page(template: nil, date: nil, variables: Variables([:]), body: text)
+        }
+        let (yaml, body) = try split(text)
+        let page = try page(fromYAML: yaml, body: body)
+        guard page.template == nil else {
+            throw FrontmatterError.templateNotAllowedInHTMLPage
+        }
+        return page
+    }
+
+    /// Parses the YAML half of a page's frontmatter into a page.
+    private static func page(fromYAML yaml: String, body: String) throws -> Page {
         var template: String?
         var date: String?
         var variables: [String: Variable] = [:]
 
-        for (key, value) in mapping {
-            guard case .scalar(let keyScalar) = key else { continue }
-            switch keyScalar.string {
-            case "template":
-                guard case .scalar(let valueScalar) = value else {
-                    throw FrontmatterError.invalidYAML("'template' must be a string")
+        if !yaml.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let node = try Yams.compose(yaml: yaml)
+        {
+            guard case .mapping(let mapping) = node else {
+                throw FrontmatterError.invalidYAML("the frontmatter must be a YAML mapping")
+            }
+
+            for (key, value) in mapping {
+                guard case .scalar(let keyScalar) = key else { continue }
+                switch keyScalar.string {
+                case "template":
+                    guard case .scalar(let valueScalar) = value else {
+                        throw FrontmatterError.invalidYAML("'template' must be a string")
+                    }
+                    template = valueScalar.string
+                case "date":
+                    if case .scalar(let valueScalar) = value {
+                        date = valueScalar.string
+                    }
+                case "variables":
+                    let variable = try variable(from: value)
+                    if case .map(let map) = variable {
+                        variables = map
+                    }
+                default:
+                    break
                 }
-                template = valueScalar.string
-            case "date":
-                if case .scalar(let valueScalar) = value {
-                    date = valueScalar.string
-                }
-            case "variables":
-                let variable = try variable(from: value)
-                if case .map(let map) = variable {
-                    variables = map
-                }
-            default:
-                break
             }
         }
 
-        guard let template else {
-            throw FrontmatterError.missingTemplate
-        }
         return Page(template: template, date: date, variables: Variables(variables), body: body)
     }
 
