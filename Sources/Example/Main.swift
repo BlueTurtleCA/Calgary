@@ -17,14 +17,11 @@ struct Main {
     static func main() throws {
         // The sample site's files (content, templates, components, assets)
         // live in this directory, so the site's root is here rather than
-        // the package root. The path is relative to the current working
-        // directory, so run the sample from the package root
-        // (`swift run Example`) or via the Xcode scheme.
-        let root = URL(fileURLWithPath: "Sources/Example")
-        guard FileManager.default.fileExists(atPath: root.path) else {
-            print("Build failed: 'Sources/Example' was not found relative to the current directory (\(FileManager.default.currentDirectoryPath)). Run the sample from the package root, e.g. `swift run Example`.")
-            exit(1)
-        }
+        // the package root. Anchoring to this file's location (resolved at
+        // compile time) means the sample builds from any working directory,
+        // including Xcode's run button, which runs the executable from
+        // DerivedData rather than the package root.
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let site = Site(
             name: "Blue Turtle Canada",
             source: "content",

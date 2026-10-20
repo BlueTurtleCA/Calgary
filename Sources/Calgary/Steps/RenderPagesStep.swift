@@ -82,6 +82,7 @@ struct RenderPagesStep: BuildStep {
 
     private func renderPage(
         at pageURL: URL,
+        localeOverride: String? = nil,
         site: Site,
         templatesURL: URL?,
         engine: TemplateEngine,
@@ -95,7 +96,7 @@ struct RenderPagesStep: BuildStep {
         let page = isHTMLPage ? try Frontmatter.parseHTML(text) : try Frontmatter.parse(text)
 
         let relative = relativePath(of: pageURL, to: site.sourceDirectory)
-        let locale = Self.locale(of: relative, in: site.localization)
+        let locale = localeOverride ?? Self.locale(of: relative, in: site.localization)
         let defaultLocale = site.localization?.defaultLocale ?? "default"
         let outputRelative = Self.outputPath(for: relative, locale: locale, defaultLocale: defaultLocale)
 
@@ -137,6 +138,38 @@ struct RenderPagesStep: BuildStep {
             withIntermediateDirectories: true
         )
         try site.fileSystem.write(Data(html.utf8), to: outputURL)
+
+        // A default-locale HTML page is locale-neutral content: render it for
+        // every declared locale that has no explicit translation file, so its
+        // strings and variables pick up that locale. A default-locale markdown
+        // page needs an explicit translation file; warn when one is missing.
+        if locale == defaultLocale, let localization = site.localization {
+            let base = Self.baseName(of: relative)
+            for otherLocale in localization.locales where otherLocale != defaultLocale {
+                guard !Self.hasTranslation(
+                    of: base,
+                    in: otherLocale,
+                    sourceDirectory: site.sourceDirectory,
+                    fileSystem: site.fileSystem
+                ) else { continue }
+                if isHTMLPage {
+                    try renderPage(
+                        at: pageURL,
+                        localeOverride: otherLocale,
+                        site: site,
+                        templatesURL: templatesURL,
+                        engine: engine,
+                        resolver: resolver,
+                        renderer: renderer,
+                        stringTable: stringTable
+                    )
+                } else {
+                    site.warn(
+                        "no '\(otherLocale)' version of '\(relative)' found; '\(otherLocale)/\(base).html' was not rendered"
+                    )
+                }
+            }
+        }
     }
 
     private func builtInVariables(
@@ -219,12 +252,33 @@ struct RenderPagesStep: BuildStep {
         return path
     }
 
+    /// Whether an explicit translation file exists for a page base in a
+    /// locale: either `<base>.<locale>.md` or `<base>.<locale>.html`.
+    private static func hasTranslation(
+        of base: String,
+        in locale: String,
+        sourceDirectory: URL,
+        fileSystem: any FileSystem
+    ) -> Bool {
+        for extensionName in ["md", "html"] {
+            let fileName = "\(base).\(locale).\(extensionName)"
+            if fileSystem.fileExists(atPath: sourceDirectory.appendingPathComponent(fileName).path) {
+                return true
+            }
+        }
+        return false
+    }
+
     /// The output path, relative to the output directory, for a page.
     ///
     /// Default-locale pages mirror their source path: `blog/post.md` becomes
     /// `blog/post.html`, and `about.html` stays `about.html`. Translations
     /// are written under a subfolder named after the locale, with the locale
     /// suffix removed: `blog/post.fr-fr.md` becomes `fr-fr/blog/post.html`.
+    /// A page rendered for a locale it does not carry in its file name (a
+    /// default-locale HTML page rendered for every declared locale) is also
+    /// written under the locale subfolder: `about.html` rendered for `fr-fr`
+    /// becomes `fr-fr/about.html`.
     private static func outputPath(for relative: String, locale: String, defaultLocale: String) -> String {
         if locale != defaultLocale {
             for ext in [".md", ".html"] {
@@ -233,6 +287,10 @@ struct RenderPagesStep: BuildStep {
                     return locale + "/" + String(relative.dropLast(suffix.count)) + ".html"
                 }
             }
+            let htmlName = relative.hasSuffix(".md")
+                ? String(relative.dropLast(3)) + ".html"
+                : relative
+            return locale + "/" + htmlName
         }
         if relative.hasSuffix(".md") {
             return String(relative.dropLast(3)) + ".html"
@@ -261,6 +319,13 @@ struct RenderPagesStep: BuildStep {
             }
         }
 
+        // A default-locale HTML page renders for every declared locale, so it
+        // counts as a page for each locale even without an explicit
+        // translation file.
+        let defaultHTMLPage = site.fileSystem.fileExists(
+            atPath: site.sourceDirectory.appendingPathComponent(base + ".html").path
+        )
+
         var links: [String] = []
         var defaultURL: String?
         for alternate in localization.locales {
@@ -272,11 +337,12 @@ struct RenderPagesStep: BuildStep {
                 sourceFiles = [base + "." + alternate + ".md", base + "." + alternate + ".html"]
                 url = "/" + alternate + "/" + base + ".html"
             }
-            guard sourceFiles.contains(where: {
+            let hasExplicitFile = sourceFiles.contains(where: {
                 site.fileSystem.fileExists(
                     atPath: site.sourceDirectory.appendingPathComponent($0).path
                 )
-            }) else { continue }
+            })
+            guard hasExplicitFile || (alternate != defaultLocale && defaultHTMLPage) else { continue }
             links.append("<link rel=\"alternate\" hreflang=\"\(alternate)\" href=\"\(url)\">")
             if alternate == defaultLocale {
                 defaultURL = url

@@ -90,6 +90,8 @@ Hi, welcome to {{ title }}!
 
 Declared in the pipeline with `Site.localize(defaultLocale:locales:strings:)`. A page whose file name ends in `.<locale>.md` for a declared non-default locale is a translation, written under a `/<locale>/` subfolder in the output (the default locale stays at the root). Strings come from per-locale YAML files or an Xcode `.xcstrings` catalog (pointed at by `strings:`), exposed to templates and components as `{{ strings.… }}`, falling back to the default locale.
 
+HTML pages are locale-neutral: a default-locale `page.html` is also rendered for every other declared locale (its strings and variables pick up each locale) and written under each `/<locale>/` subfolder, unless an explicit `page.<locale>.html` or `page.<locale>.md` translation exists, in which case that file takes precedence. A default-locale markdown page without a translation renders only for the default locale, and the build reports a warning for each missing locale.
+
 ### Templates (`templates/*.html`)
 
 HTML with slots:
@@ -178,6 +180,7 @@ struct Main {
 3. Resolve `{% include %}`s recursively. Markdown components render to HTML first, then pass through the template engine (so components can nest and use variables). Cycle detection via a resolution stack.
 4. Render remaining markdown → HTML via swift-markdown, with smart punctuation disabled so quotes and template tags pass through literally.
 5. Inject as `{{ content }}` into the template, interpolate, write output. Path mirrors source: `blog/post.md` → `build/blog/post.html`.
+6. When localized, a default-locale HTML page is re-rendered for every declared locale that has no explicit translation file (output under `/<locale>/`); a default-locale markdown page with a missing translation produces a warning instead.
 
 ## Dependencies
 

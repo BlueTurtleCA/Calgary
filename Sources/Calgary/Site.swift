@@ -28,7 +28,11 @@ public final class Site {
     /// The directory that relative paths are resolved against.
     ///
     /// Defaults to the current working directory, which is the consumer's
-    /// project root when they run their executable.
+    /// project root when they run their executable from the terminal.
+    /// When the executable is run from Xcode's run button, the working
+    /// directory is DerivedData instead — pass an explicit `root` in that
+    /// case, for example one anchored to the pipeline file's location with
+    /// `URL(fileURLWithPath: #filePath)`.
     public let root: URL
 
     /// The file system the build steps use.
@@ -53,6 +57,9 @@ public final class Site {
     /// The steps in the pipeline, in the order they will run.
     public private(set) var steps: [any BuildStep] = []
 
+    /// Warnings collected during the build, printed when the build finishes.
+    public private(set) var warnings: [String] = []
+
     /// Creates a site.
     ///
     /// - Parameters:
@@ -60,7 +67,9 @@ public final class Site {
     ///   - source: The source directory, relative to `root`.
     ///   - output: The output directory, relative to `root`.
     ///   - root: The directory that relative paths are resolved against.
-    ///     Defaults to the current working directory.
+    ///     Defaults to the current working directory, which is not the
+    ///     project root when the executable is run from Xcode's run
+    ///     button — pass an explicit `root` in that case.
     ///   - fileSystem: The file system the build steps use.
     ///     Defaults to `LocalFileSystem`.
     ///   - commandRunner: The runner used to execute external commands.
@@ -217,6 +226,14 @@ public final class Site {
     /// rendered by the template engine without markdown conversion. Each page
     /// is written to the output directory, mirroring its source path:
     /// `content/blog/post.md` becomes `build/blog/post.html`.
+    ///
+    /// When the site is localized, a default-locale HTML page is locale-neutral
+    /// content: it is also rendered for every other declared locale, so its
+    /// strings and variables pick up that locale, unless an explicit
+    /// `<name>.<locale>.html` or `<name>.<locale>.md` translation exists, in
+    /// which case that file takes precedence. A default-locale markdown page
+    /// without a translation renders only for the default locale and the build
+    /// reports a warning.
     @discardableResult
     public func renderPages(glob: String = "**/*.{md,html}") -> Site {
         addStep(RenderPagesStep(glob: glob))
@@ -231,14 +248,25 @@ public final class Site {
         addStep(OpenSiteStep(page: page))
     }
 
+    /// Records a warning to be reported when the build finishes.
+    ///
+    /// Steps use this for non-fatal problems — for example, a missing
+    /// translation of a page — that should be surfaced without failing the
+    /// build.
+    public func warn(_ message: String) {
+        warnings.append(message)
+    }
+
     /// Runs the build.
     ///
     /// The output directory is removed and recreated, then each step runs in
-    /// the order it was added.
+    /// the order it was added. Warnings collected during the build are
+    /// printed when it finishes.
     ///
     /// - Throws: A `BuildError` if the output directory cannot be prepared or
     ///   a step fails.
     public func build() throws {
+        warnings.removeAll()
         try prepareOutputDirectory()
         for step in steps {
             print("  \(step.name)")
@@ -249,6 +277,9 @@ public final class Site {
             } catch {
                 throw BuildError.stepFailed(step: step.name, underlying: error)
             }
+        }
+        for warning in warnings {
+            print("warning: \(warning)")
         }
     }
 

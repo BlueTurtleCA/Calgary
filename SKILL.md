@@ -40,7 +40,7 @@ targets: [
 project/
 ├── Package.swift
 ├── Sources/MySite/Main.swift   # the build pipeline
-├── content/                    # markdown pages
+├── content/                    # markdown or HTML pages
 │   └── index.md
 ├── templates/                  # HTML templates
 │   └── home.html
@@ -63,7 +63,14 @@ import Foundation
 @main
 struct Main {
     static func main() throws {
-        let site = Site(name: "My Site", source: "content", output: "build")
+        // Anchor the site's root to this file's location (resolved at
+        // compile time) so the build works from any working directory —
+        // including Xcode's run button, which runs the executable from
+        // DerivedData rather than the project root.
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // Sources/MySite
+            .deletingLastPathComponent() // project root
+        let site = Site(name: "My Site", source: "content", output: "build", root: root)
             .copyAssets(from: "assets")
             .registerTemplates(in: "templates")
             .registerComponents(in: "components")
@@ -81,7 +88,7 @@ struct Main {
 }
 ```
 
-All paths are relative to the current working directory, so run the executable from the project root.
+All paths are relative to the site's root. Because the root is anchored to the pipeline file, the build works from any working directory — the terminal or Xcode's run button.
 
 ## 4. Write the content
 
@@ -145,6 +152,8 @@ let site = Site(name: "My Site", source: "content", output: "build")
 ```
 
 - A page whose file name ends in `.<locale>.md` for a declared non-default locale is a translation, written under a subfolder named after the locale: `content/index.fr-fr.md` → `build/fr-fr/index.html`. The default locale stays at the output root.
+- HTML pages are locale-neutral: a default-locale `page.html` is also rendered for every other declared locale, with that locale's strings and variables, and written under each `/<locale>/` subfolder — unless an explicit `page.<locale>.html` or `page.<locale>.md` translation exists, in which case that file takes precedence.
+- A default-locale markdown page without a translation renders only for the default locale; the build prints a warning for each missing locale.
 - Strings come from a directory of per-locale YAML files (`strings/<locale>.yaml`) or from a single Xcode string catalog (`strings: "Localizable.xcstrings"`). In a catalog, keys are flat and a dot in a key is a nesting level; locale IDs are matched case-insensitively (`fr-FR` satisfies `fr-fr`).
 - The active locale's strings are exposed to templates and components as `{{ strings.… }}`, falling back to the default locale for missing keys.
 - `page.alternates` is ready-to-paste `<link rel="alternate" hreflang="…">` tags (one per locale that has the page, plus `x-default`); put it in the template's `<head>`.
@@ -158,6 +167,7 @@ swift run MySite
 - `build/` is wiped and recreated on every build; steps run in the order they were added.
 - The `open` step opens `build/index.html` in a browser on Apple platforms; otherwise inspect the generated HTML directly.
 - A failed build throws a `BuildError` whose message names the failing step.
+- Warnings (for example, a markdown page with no translation) are printed when the build finishes; they do not fail the build.
 
 ## Pipeline steps
 
@@ -168,7 +178,7 @@ swift run MySite
 | `registerTemplates(in:)` | Registers the templates directory (required by `renderPages`) |
 | `registerComponents(in:)` | Registers the components directory |
 | `localize(defaultLocale:locales:strings:)` | Configures locales and the strings source (YAML directory or `.xcstrings` catalog); translations render under `/<locale>/` |
-| `renderPages(glob:)` | Renders every page matching the glob (default `**/*.md`) into its template |
+| `renderPages(glob:)` | Renders every page matching the glob (default `**/*.{md,html}`) into its template |
 | `open(_:)` | Opens a built page in the default browser (Apple platforms) |
 | `addStep(_:)` | Adds a custom step |
 
@@ -205,7 +215,7 @@ Declare `tailwindcss` and `@tailwindcss/cli` in a `package.json` at the project 
 
 ## Gotchas
 
-- Relative paths in `Site(...)` resolve against the current working directory (or an explicit `root:`), so run the pipeline from the project root.
+- Relative paths in `Site(...)` resolve against the site's `root`, which defaults to the current working directory. When the executable is run from Xcode's run button, that is DerivedData, not the project root — pass an explicit `root:` anchored to the pipeline file with `#filePath` (as in the example above).
 - `renderPages` requires `registerTemplates(in:)` to have been called.
 - Markdown is rendered with smart punctuation disabled — straight quotes and `{% include %}` tags pass through literally.
 - `open(_:)` is a no-op off Apple platforms.

@@ -435,6 +435,99 @@ struct RenderPagesStepTests {
         #expect(try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
         #expect(try readFile(at: "build/fr-fr/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
         #expect(try readFile(at: "build/fr-fr/index.fr-fr.html", relativeTo: virtualRoot, in: fileSystem) == nil)
+
+        // The explicit translation file wins over the default page.
+        let french = try readFile(at: "build/fr-fr/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(french?.contains("FR") == true)
+        #expect(french?.contains("EN") == false)
+        #expect(site.warnings.isEmpty)
+    }
+
+    @Test("Renders a default-locale HTML page for every declared locale")
+    func rendersHTMLPageForEveryDeclaredLocale() throws {
+        let fileSystem = InMemoryFileSystem()
+        try writeFile(
+            """
+            {
+              "sourceLanguage" : "en",
+              "strings" : {
+                "greeting" : {
+                  "localizations" : {
+                    "en" : { "stringUnit" : { "state" : "translated", "value" : "Hello" } },
+                    "fr-FR" : { "stringUnit" : { "state" : "translated", "value" : "Bonjour" } }
+                  }
+                }
+              },
+              "version" : "1.0"
+            }
+            """,
+            at: "Localizable.xcstrings",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "<html><body>{{ strings.greeting }} ({{ page.locale }})</body></html>",
+            at: "content/index.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .localize(defaultLocale: "en", locales: ["fr-fr"], strings: "Localizable.xcstrings")
+            .renderPages()
+
+        try site.build()
+
+        let english = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(english?.contains("Hello (en)") == true)
+
+        let french = try readFile(at: "build/fr-fr/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(french?.contains("Bonjour (fr-fr)") == true)
+        #expect(site.warnings.isEmpty)
+    }
+
+    @Test("Warns when a markdown page has no translation")
+    func warnsWhenMarkdownPageHasNoTranslation() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+
+        let site = makeSite(fileSystem: fileSystem)
+            .localize(defaultLocale: "en", locales: ["fr-fr"])
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        #expect(try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        #expect(try readFile(at: "build/fr-fr/index.html", relativeTo: virtualRoot, in: fileSystem) == nil)
+        #expect(site.warnings == ["no 'fr-fr' version of 'index.md' found; 'fr-fr/index.html' was not rendered"])
+    }
+
+    @Test("Emits hreflang alternates for every locale an HTML page renders for")
+    func emitsAlternatesForEveryLocaleAnHTMLPageRendersFor() throws {
+        let fileSystem = InMemoryFileSystem()
+        try writeFile(
+            "<html><head>{{ page.alternates }}</head><body>EN</body></html>",
+            at: "content/index.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .localize(defaultLocale: "en", locales: ["fr-fr", "de"])
+            .renderPages()
+
+        try site.build()
+
+        let output = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"en\" href=\"/index.html\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"fr-fr\" href=\"/fr-fr/index.html\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"de\" href=\"/de/index.html\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"x-default\" href=\"/index.html\">") == true)
+
+        #expect(try readFile(at: "build/fr-fr/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        #expect(try readFile(at: "build/de/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
     }
 
     @Test("A locale-suffixed file is an ordinary page when the site is not localized")
