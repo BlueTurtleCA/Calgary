@@ -128,6 +128,62 @@ struct RenderPagesStepTests {
         #expect(output?.contains("/dated.html / 2026-01-01") == true)
     }
 
+    @Test("Exposes site template variables under the site namespace")
+    func exposesSiteTemplateVariables() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            """
+            ---
+            template: home
+            variables:
+              title: Vars
+            ---
+
+            {{ site.year }}
+            """,
+            at: "content/vars.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = Site(
+            name: "Test Site",
+            root: virtualRoot,
+            fileSystem: fileSystem,
+            templateVariables: ["year": .string("2026")]
+        )
+        .registerTemplates(in: "templates")
+        .registerComponents(in: "components")
+        .renderPages()
+
+        try site.build()
+
+        let output = try readFile(at: "build/vars.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("<p>2026</p>") == true)
+    }
+
+    @Test("Site template variables override built-in site variables")
+    func siteTemplateVariablesOverrideBuiltIns() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+
+        let site = Site(
+            name: "Test Site",
+            root: virtualRoot,
+            fileSystem: fileSystem,
+            templateVariables: ["name": .string("Override")]
+        )
+        .registerTemplates(in: "templates")
+        .registerComponents(in: "components")
+        .renderPages()
+
+        try site.build()
+
+        let output = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("<header>Override</header>") == true)
+    }
+
     @Test("Throws when templates are not registered")
     func throwsWhenTemplatesAreNotRegistered() throws {
         let fileSystem = InMemoryFileSystem()

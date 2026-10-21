@@ -116,6 +116,7 @@ Markdown (`.md`) or raw HTML (`.html`) partials. They may use variables and incl
 
 - `{{ variable }}` — interpolation (dot notation supported: `{{ site.name }}`)
 - `{% include "path" %}` — component/template include
+- `{% include "path" key="value" %}` — include with variables; arguments are visible inside the component (and its nested includes) and shadow same-named outer variables
 
 Single-brace shorthand (`{title}`, `{components/hero}`) was considered but rejected: single braces collide with markdown, JSON, and CSS in real content. If the exact shorthand is ever wanted, it is a one-regex change in `TemplateEngine`.
 
@@ -169,14 +170,14 @@ struct Main {
 
 ## Library design
 
-- **Public API surface**: `Site` and its builder methods (plus `build()`) are the public API. `BuildStep`, `BuildError`, `FileSystem`, `LocalFileSystem`, `CommandRunner`, `CommandResult`, and `ProcessCommandRunner` are also public so downstream projects can write custom steps and tests. Everything else — engine, frontmatter, steps — stays `internal`.
+- **Public API surface**: `Site` and its builder methods (plus `build()`) are the public API. `BuildStep`, `BuildError`, `FileSystem`, `LocalFileSystem`, `CommandRunner`, `CommandResult`, `ProcessCommandRunner`, and `Variable` (the value type of `Site`'s `templateVariables`) are also public so downstream projects can write custom steps and tests. Everything else — engine, frontmatter, steps — stays `internal`.
 - **Path resolution**: the `Site` API takes relative paths (`source: "content"`, `output: "build"`); they resolve against `root`, which defaults to the current working directory (the consumer's project root when they run their executable).
 - **Sample is not API**: the `Example` executable and the demo content directories exist to demonstrate and integration-test the library; they are not shipped as a product and must not be treated as part of the public API.
 
 ## Per-page render flow
 
 1. Read the page, split frontmatter (Yams) → `template`, `date`, variables.
-2. Merge variables: built-ins (`site.name`, `page.url`, `page.date` when declared; `page.locale`, `site.defaultLocale`, `page.alternates` when localized) + frontmatter (frontmatter wins) + the page's locale strings under `strings` (when localized).
+2. Merge variables: built-ins (`site.name`, `page.url`, `page.date` when declared; `page.locale`, `site.defaultLocale`, `page.alternates` when localized) + the site's `templateVariables` under `site` (overriding built-ins) + frontmatter (frontmatter wins) + the page's locale strings under `strings` (when localized).
 3. Resolve `{% include %}`s recursively. Markdown components render to HTML first, then pass through the template engine (so components can nest and use variables). Cycle detection via a resolution stack.
 4. Render remaining markdown → HTML via swift-markdown, with smart punctuation disabled so quotes and template tags pass through literally.
 5. Inject as `{{ content }}` into the template, interpolate, write output. Path mirrors source: `blog/post.md` → `build/blog/post.html`.

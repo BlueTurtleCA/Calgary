@@ -111,8 +111,20 @@ Markdown components are rendered to HTML first, then pass through the template e
 
 - `{{ variable }}` — interpolation; dot notation supported (`{{ site.name }}`)
 - `{% include "path" %}` — include a component (or template)
+- `{% include "path" key="value" %}` — include with variables; the arguments are visible inside the component (and its nested includes) and shadow same-named outer variables
 
 Built-in variables: `site.name`, `page.url`, and `page.date` (when declared). When the site is localized, pages also get `page.locale`, `site.defaultLocale`, and `page.alternates` (see [Localization](#localization)). Variables from a page's frontmatter override built-ins.
+
+Site-wide variables can be declared in the pipeline and are exposed under the `site` namespace:
+
+```swift
+let site = Site(
+    name: "My Site",
+    templateVariables: ["year": .string("2026")]
+)
+```
+
+`{{ site.year }}` then renders `2026` on every page. Values are `Variable`s — strings, numbers, booleans, lists, or nested maps — so computed or fetched values (a year, a scraped headline) can flow straight into templates.
 
 ## Localization
 

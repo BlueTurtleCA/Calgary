@@ -72,6 +72,128 @@ struct TemplateEngineTests {
         #expect(result == "before<section>hero</section>after")
     }
 
+    @Test("Passes arguments to an include")
+    func passesArgumentsToInclude() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(
+            fileSystem: fileSystem,
+            components: ["components/header.html": "<header>{{ title }}</header>"]
+        )
+
+        let result = try engine.render(
+            "{% include \"components/header\" title=\"Blue Turtle Canada\" %}",
+            variables: Variables(),
+            resolver: resolver
+        )
+
+        #expect(result == "<header>Blue Turtle Canada</header>")
+    }
+
+    @Test("Arguments shadow outer variables of the same name")
+    func argumentsShadowOuterVariables() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(
+            fileSystem: fileSystem,
+            components: ["components/header.html": "<header>{{ title }}</header>"]
+        )
+
+        let result = try engine.render(
+            "{% include \"components/header\" title=\"Inner\" %}",
+            variables: Variables(["title": .string("Outer")]),
+            resolver: resolver
+        )
+
+        #expect(result == "<header>Inner</header>")
+    }
+
+    @Test("Outer variables remain visible in a component with arguments")
+    func outerVariablesRemainVisibleInComponentWithArguments() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(
+            fileSystem: fileSystem,
+            components: ["components/header.html": "<header>{{ site.name }} / {{ title }}</header>"]
+        )
+
+        let result = try engine.render(
+            "{% include \"components/header\" title=\"Home\" %}",
+            variables: Variables(["site": .map(["name": .string("Blue Turtle Canada")])]),
+            resolver: resolver
+        )
+
+        #expect(result == "<header>Blue Turtle Canada / Home</header>")
+    }
+
+    @Test("Arguments are visible in nested includes")
+    func argumentsAreVisibleInNestedIncludes() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(
+            fileSystem: fileSystem,
+            components: [
+                "components/outer.html": "outer[{% include \"components/inner\" %}]",
+                "components/inner.html": "{{ title }}",
+            ]
+        )
+
+        let result = try engine.render(
+            "{% include \"components/outer\" title=\"Nested\" %}",
+            variables: Variables(),
+            resolver: resolver
+        )
+
+        #expect(result == "outer[Nested]")
+    }
+
+    @Test("Passes arguments to a markdown component")
+    func passesArgumentsToMarkdownComponent() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(
+            fileSystem: fileSystem,
+            components: ["components/hero.md": "## {{ title }}"]
+        )
+
+        let result = try engine.render(
+            "{% include \"components/hero\" title=\"Welcome\" %}",
+            variables: Variables(),
+            resolver: resolver
+        )
+
+        #expect(result.contains("<h2>Welcome</h2>") == true)
+    }
+
+    @Test("Tolerates whitespace around argument equals signs")
+    func toleratesWhitespaceAroundArgumentEqualsSigns() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(
+            fileSystem: fileSystem,
+            components: ["components/hero.html": "{{ title }}"]
+        )
+
+        let result = try engine.render(
+            "{%  include \"components/hero\"  title = \"Turtle\"  %}",
+            variables: Variables(),
+            resolver: resolver
+        )
+
+        #expect(result == "Turtle")
+    }
+
+    @Test("Leaves an include with a malformed argument untouched")
+    func leavesIncludeWithMalformedArgumentUntouched() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(
+            fileSystem: fileSystem,
+            components: ["components/hero.html": "hero"]
+        )
+
+        let result = try engine.render(
+            "{% include \"components/hero\" title=Turtle %}",
+            variables: Variables(),
+            resolver: resolver
+        )
+
+        #expect(result == "{% include \"components/hero\" title=Turtle %}")
+    }
+
     @Test("Interpolates variables inside a component")
     func interpolatesVariablesInsideComponent() throws {
         let fileSystem = InMemoryFileSystem()

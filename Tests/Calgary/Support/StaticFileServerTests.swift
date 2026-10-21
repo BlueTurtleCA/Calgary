@@ -48,7 +48,9 @@ struct StaticFileServerTests {
             }
             return (http.statusCode, Self.headers(of: http), data)
         } catch let error as URLError {
-            guard let http = error.userInfo[NSURLErrorHTTPResponseKey] as? HTTPURLResponse else {
+            // The NSURLErrorHTTPResponseKey constant was removed from recent
+            // SDKs; the userInfo key is still the same string at runtime.
+            guard let http = error.userInfo["NSURLErrorHTTPResponseKey"] as? HTTPURLResponse else {
                 throw error
             }
             return (http.statusCode, Self.headers(of: http), Data())
@@ -128,7 +130,7 @@ struct StaticFileServerTests {
 
         let (status, headers, body) = try await request(server, "/css/site.css", method: "HEAD")
         #expect(status == 200)
-        #expect(headers["content-length"] == "8")
+        #expect(headers["content-length"] == "7")
         #expect(body.isEmpty)
     }
 

@@ -135,9 +135,11 @@ Markdown (`.md`) or raw HTML (`.html`) partials. They may use variables and incl
 
 ### Template syntax
 
-- `{{ variable }}` — interpolation; dot notation supported (`{{ site.name }}`)
+- ``{{ variable }}` — interpolation; dot notation supported (`{{ site.name }}`)
 - `{% include "path" %}` — include a component (or template)
+- `{% include "path" key="value" %}` — include with variables; the arguments are visible inside the component (and its nested includes) and shadow same-named outer variables
 - Built-in variables: `site.name`, `page.url`, `page.date` (when declared); when the site is localized, also `page.locale`, `site.defaultLocale`, and `page.alternates`. Frontmatter variables override built-ins.
+- Site-wide variables: pass `templateVariables:` to `Site(...)` — for example, `templateVariables: ["year": .string("2026")]` renders as `{{ site.year }}` on every page. Values are `Variable`s (strings, numbers, booleans, lists, nested maps), so computed or fetched values (a year, a scraped headline) can flow straight into templates; they override same-named built-ins.
 
 ### Localization (optional)
 

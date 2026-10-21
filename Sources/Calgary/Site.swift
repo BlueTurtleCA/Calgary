@@ -51,6 +51,14 @@ public final class Site {
     /// The directory of registered components, relative to `root`, if any.
     public private(set) var componentsDirectory: String?
 
+    /// Site-wide template variables, exposed to templates and components
+    /// under the `site` namespace: `templateVariables: ["year": .string("2026")]`
+    /// renders as `{{ site.year }}` on every page.
+    ///
+    /// Values layer on top of the built-in `site` variables, so an entry
+    /// named `name` overrides `site.name`.
+    public let templateVariables: [String: Variable]
+
     /// The site's localization configuration, if any.
     private(set) var localization: Localization?
 
@@ -74,13 +82,18 @@ public final class Site {
     ///     Defaults to `LocalFileSystem`.
     ///   - commandRunner: The runner used to execute external commands.
     ///     Defaults to `ProcessCommandRunner`.
+    ///   - templateVariables: Site-wide variables exposed to templates and
+    ///     components under the `site` namespace, for example
+    ///     `["year": .string("2026")]` renders as `{{ site.year }}`.
+    ///     Defaults to an empty dictionary.
     public init(
         name: String,
         source: String = "content",
         output: String = "build",
         root: URL? = nil,
         fileSystem: any FileSystem = LocalFileSystem(),
-        commandRunner: any CommandRunner = ProcessCommandRunner()
+        commandRunner: any CommandRunner = ProcessCommandRunner(),
+        templateVariables: [String: Variable] = [:]
     ) {
         self.name = name
         self.source = source
@@ -88,6 +101,7 @@ public final class Site {
         self.root = root ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         self.fileSystem = fileSystem
         self.commandRunner = commandRunner
+        self.templateVariables = templateVariables
     }
 
     /// The resolved source directory (for example, `/path/to/project/content`).

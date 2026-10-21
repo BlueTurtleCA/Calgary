@@ -29,7 +29,8 @@ enum TemplateError: Error, Equatable, CustomStringConvertible {
 /// `{{ variable }}` tags (dot notation supported).
 ///
 /// Includes are resolved first — each component is rendered recursively with
-/// the same variables, so components can use variables and include other
+/// the current variables, plus any `key="value"` arguments passed to the
+/// include layered on top, so components can use variables and include other
 /// components. Markdown components are rendered to HTML before they pass
 /// through the engine. The remaining text is then interpolated.
 struct TemplateEngine: Sendable {
@@ -56,7 +57,13 @@ struct TemplateEngine: Sendable {
 
     // MARK: Includes
 
-    private static let includePattern = "\\{%\\s*include\\s+\"([^\"]+)\"\\s*%\\}"
+    /// Matches an include tag: the component path in quotes, followed by an
+    /// optional block of `key="value"` arguments.
+    private static let includePattern =
+        "\\{%\\s*include\\s+\"([^\"]+)\"((?:\\s+[A-Za-z0-9_]+\\s*=\\s*\"[^\"]*\")*)\\s*%\\}"
+
+    /// Matches a single `key="value"` argument inside an include tag.
+    private static let argumentPattern = "([A-Za-z0-9_]+)\\s*=\\s*\"([^\"]*)\""
 
     private func resolveIncludes(
         in text: String,
@@ -74,13 +81,20 @@ struct TemplateEngine: Sendable {
             else { continue }
             result += text[searchStart..<matchRange.lowerBound]
             let path = String(text[pathRange])
+            // Arguments passed to the include layer on top of the current
+            // variables, scoped to the component and its nested includes.
+            var scopedVariables = variables
+            if let argumentsRange = Range(match.range(at: 2), in: text), !argumentsRange.isEmpty {
+                let arguments = try Self.parseArguments(String(text[argumentsRange]))
+                scopedVariables = variables.merged(with: Variables(arguments))
+            }
             let resolved = try resolver.resolve(path, stack: stack)
             // Markdown components render to HTML first, then pass through
             // the engine, so they can nest and use variables.
             let content = resolved.isMarkdown ? markdownRenderer.render(resolved.content) : resolved.content
             let rendered = try render(
                 content,
-                variables: variables,
+                variables: scopedVariables,
                 resolver: resolver,
                 stack: stack + [resolved.resolvedPath]
             )
@@ -89,6 +103,22 @@ struct TemplateEngine: Sendable {
         }
         result += text[searchStart...]
         return result
+    }
+
+    /// Parses `key="value"` pairs from an include's argument block.
+    ///
+    /// Duplicate keys: the last one wins.
+    private static func parseArguments(_ text: String) throws -> [String: Variable] {
+        var arguments: [String: Variable] = [:]
+        let regex = try NSRegularExpression(pattern: Self.argumentPattern)
+        for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard
+                let keyRange = Range(match.range(at: 1), in: text),
+                let valueRange = Range(match.range(at: 2), in: text)
+            else { continue }
+            arguments[String(text[keyRange])] = .string(String(text[valueRange]))
+        }
+        return arguments
     }
 
     // MARK: Interpolation

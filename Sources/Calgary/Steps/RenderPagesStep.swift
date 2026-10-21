@@ -185,6 +185,9 @@ struct RenderPagesStep: BuildStep {
             pageValues["date"] = .string(date)
         }
         var siteValues: [String: Variable] = ["name": .string(site.name)]
+        for (key, value) in site.templateVariables {
+            siteValues[key] = value
+        }
 
         if site.localization != nil {
             pageValues["locale"] = .string(locale)

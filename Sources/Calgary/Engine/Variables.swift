@@ -2,9 +2,10 @@ import Foundation
 
 /// A single template variable value.
 ///
-/// Values come from a page's frontmatter (YAML) or from built-ins, and are
-/// looked up with dot notation when a template is rendered.
-indirect enum Variable: Equatable, Sendable {
+/// Values come from a page's frontmatter (YAML), from the site's
+/// `templateVariables`, or from built-ins, and are looked up with dot
+/// notation when a template is rendered.
+public indirect enum Variable: Equatable, Sendable {
     case string(String)
     case integer(Int)
     case number(Double)
@@ -13,7 +14,7 @@ indirect enum Variable: Equatable, Sendable {
     case map([String: Variable])
 
     /// The value as plain text, for interpolation into a template.
-    var stringValue: String {
+    public var stringValue: String {
         switch self {
         case .string(let value):
             return value
