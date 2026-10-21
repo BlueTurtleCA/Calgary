@@ -248,6 +248,24 @@ public final class Site {
         addStep(OpenSiteStep(page: page))
     }
 
+    /// Adds a step that serves the built site over HTTP and opens it in the
+    /// default browser.
+    ///
+    /// The server listens on `http://localhost:<port>/` and serves the
+    /// output directory, so absolute paths in the site (for example,
+    /// `/css/site.css`) resolve the same way they do in production. Unlike
+    /// `open(_:)`, which opens a single file and finishes, the step keeps
+    /// the process running: it blocks until the process is interrupted
+    /// (for example, with Ctrl-C), which stops the server and ends the
+    /// build. On platforms without Network.framework the step fails the
+    /// build.
+    ///
+    /// - Parameter port: The port to listen on. Defaults to `8080`.
+    @discardableResult
+    public func serve(port: Int = 8080) -> Site {
+        addStep(ServeSiteStep(port: port))
+    }
+
     /// Records a warning to be reported when the build finishes.
     ///
     /// Steps use this for non-fatal problems — for example, a missing

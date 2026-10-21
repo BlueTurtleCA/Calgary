@@ -43,7 +43,15 @@ struct Main {
         .registerTemplates(in: "templates")
         .registerComponents(in: "components")
         .renderPages()
-        .open("index.html")
+
+        // The sample opens the built file by default, so the build always
+        // finishes. Pass --serve to serve the site over HTTP instead, which
+        // is how absolute paths like /css/site.css resolve in production.
+        if CommandLine.arguments.contains("--serve") {
+            site.serve()
+        } else {
+            site.open("index.html")
+        }
 
         do {
             try site.build()

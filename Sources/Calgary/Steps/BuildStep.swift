@@ -55,6 +55,12 @@ public enum BuildError: Error, Equatable, CustomStringConvertible, Sendable {
     /// A command exited with a non-zero status.
     case commandFailed(command: String, exitCode: Int32, output: String)
 
+    /// The port the site server wanted to listen on is already in use.
+    case portInUse(port: Int)
+
+    /// Serving the site over HTTP is not available on this platform.
+    case serveUnavailable
+
     public var description: String {
         switch self {
         case .stepFailed(let step, let underlying):
@@ -69,6 +75,10 @@ public enum BuildError: Error, Equatable, CustomStringConvertible, Sendable {
             return "Command not found: \(command)"
         case .commandFailed(let command, let exitCode, let output):
             return "Command failed with exit code \(exitCode): \(command)\n\(output)"
+        case .portInUse(let port):
+            return "Port \(port) is already in use"
+        case .serveUnavailable:
+            return "Serving the site over HTTP is not available on this platform"
         }
     }
 
@@ -89,6 +99,10 @@ public enum BuildError: Error, Equatable, CustomStringConvertible, Sendable {
             return lhsCommand == rhsCommand
                 && lhsExitCode == rhsExitCode
                 && lhsOutput == rhsOutput
+        case (.portInUse(let lhsPort), .portInUse(let rhsPort)):
+            return lhsPort == rhsPort
+        case (.serveUnavailable, .serveUnavailable):
+            return true
         default:
             return false
         }
