@@ -87,6 +87,7 @@ struct ServeSiteStep: BuildStep {
         let outputDirectory = site.outputDirectory.path
         let nodeModules = site.root.appendingPathComponent("node_modules").path
         let streams = server.eventStreams
+        let gate = RebuildGate()
 
         let watcher = FileWatcher(paths: [site.root]) { changedPaths in
             let relevant = changedPaths.filter { path in
@@ -94,6 +95,7 @@ struct ServeSiteStep: BuildStep {
                     && !Self.isUnder(path: path, directory: nodeModules)
             }
             guard !relevant.isEmpty else { return }
+            guard gate.shouldRebuild(paths: relevant) else { return }
 
             print("Change detected; rebuilding")
             do {
@@ -111,5 +113,38 @@ struct ServeSiteStep: BuildStep {
     /// Whether `path` is `directory` itself or inside it.
     private static func isUnder(path: String, directory: String) -> Bool {
         path == directory || path.hasPrefix(directory + "/")
+    }
+}
+
+/// Remembers when the last rebuild began so the hot-reload handler can tell
+/// a real file change from a spurious FSEvents event.
+///
+/// FSEvents reports a file as changed when it is merely *read* by the build
+/// (the copy step and the CSS command both read the source files), even
+/// though the file was not modified. Without this check, each rebuild reads
+/// the source files, FSEvents reports them, and the site rebuilds forever.
+/// A file only counts as changed if it was modified after the last rebuild
+/// began, or if it no longer exists (deleted or renamed).
+private final class RebuildGate: @unchecked Sendable {
+    /// The moment the last rebuild began, or the watcher started.
+    private var lastRebuildStarted = Date()
+
+    /// Whether any of `paths` changed since the last rebuild began.
+    ///
+    /// Called on the watcher's serial queue, so no locking is needed.
+    func shouldRebuild(paths: Set<String>) -> Bool {
+        let threshold = lastRebuildStarted
+        let changed = paths.contains { path in
+            // A reported path that no longer exists was deleted or renamed.
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else {
+                return true
+            }
+            let modified = (attributes[.modificationDate] as? Date) ?? .distantPast
+            return modified > threshold
+        }
+        if changed {
+            lastRebuildStarted = Date()
+        }
+        return changed
     }
 }
