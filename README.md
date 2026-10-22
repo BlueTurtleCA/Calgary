@@ -223,6 +223,7 @@ A `Site` is a list of steps, run in order by `build()` (which first removes and 
 | `localize(defaultLocale:locales:strings:)` | Configures the site's locales and strings source (YAML directory or `.xcstrings` catalog); translations render under `/<locale>/` |
 | `renderPages(glob:)` | Renders every page matching the glob (default `**/*.md`) into its template |
 | `open(_:)` | Opens a built page in the default browser (Apple platforms) |
+| `serve(port:hotReload:)` | Serves the built site over HTTP and keeps the process running; with hot reload (the default), a file change rebuilds the site in place and reloads the browser |
 | `addStep(_:)` | Adds a custom step |
 
 ### Custom steps
@@ -256,6 +257,8 @@ swift run Example                   # builds and opens the site
 ```
 
 The sample resolves its content relative to the current working directory, so run `swift run Example` from the package root.
+
+Xcode's run button works too: when a command is missing from the minimal `PATH` Xcode launches with, `ProcessCommandRunner` falls back to the common install locations for Node.js and other command-line tools (Homebrew, nvm, Volta, asdf, mise).
 
 ## Development
 

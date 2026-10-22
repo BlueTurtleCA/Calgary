@@ -31,6 +31,17 @@ struct ServeSiteStepTests {
 
     @Test("Describes itself with the port it serves on")
     func nameIncludesPort() {
-        #expect(ServeSiteStep(port: 8080).name == "Serve on port 8080")
+        #expect(ServeSiteStep(port: 8080, hotReload: false).name == "Serve on port 8080")
+    }
+
+    @Test("Mentions hot reload in its name when enabled")
+    func nameMentionsHotReload() {
+        #expect(ServeSiteStep(port: 8080, hotReload: true).name == "Serve on port 8080 with hot reload")
+        #expect(ServeSiteStep(port: 8080, hotReload: false).name == "Serve on port 8080")
+    }
+
+    @Test("Serving is a terminal step")
+    func serveIsTerminal() {
+        #expect(ServeSiteStep(port: 8080).isTerminal)
     }
 }

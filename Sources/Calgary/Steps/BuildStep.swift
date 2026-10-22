@@ -33,6 +33,20 @@ public protocol BuildStep: Sendable {
     /// - Parameter site: The site being built.
     /// - Throws: A `BuildError` if the step cannot complete.
     func run(site: Site) throws
+
+    /// Whether the step runs once and is skipped when the pipeline is
+    /// re-run in place (for example, by the serve step's hot reload).
+    ///
+    /// Steps that produce output (copying assets, rendering pages) are not
+    /// terminal and are re-run; steps that only observe the result (serving,
+    /// opening a browser) are terminal and run once.
+    var isTerminal: Bool { get }
+}
+
+extension BuildStep {
+    /// The default for `isTerminal`: steps are re-run when the pipeline is
+    /// re-run in place.
+    var isTerminal: Bool { false }
 }
 
 /// An error that occurs while building a site.

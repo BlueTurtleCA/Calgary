@@ -15,7 +15,13 @@ import Foundation
 ///
 /// Relative paths given to the initializer are resolved against `root`,
 /// which defaults to the current working directory.
-public final class Site {
+///
+/// `Site` is not thread-safe. It is marked `@unchecked Sendable` so the
+/// serve step's hot-reload closure can capture it: a build runs
+/// synchronously on one thread, and while the serve step blocks that
+/// thread, its rebuilds run one at a time on the watcher's queue, so at
+/// most one thread touches a site at a time.
+public final class Site: @unchecked Sendable {
     /// The site's name.
     public let name: String
 
@@ -157,7 +163,8 @@ public final class Site {
     ///
     /// - Parameters:
     ///   - command: The executable to run. Either a name resolved against
-    ///     `PATH` (for example, `"npx"`) or a path to an executable.
+    ///     `PATH` and the runner's additional search directories (for
+    ///     example, `"npx"`) or a path to an executable.
     ///   - arguments: Arguments passed to the command.
     ///   - input: The file the command reads, relative to `root`.
     ///     The build fails if it does not exist.
@@ -274,10 +281,20 @@ public final class Site {
     /// build. On platforms without Network.framework the step fails the
     /// build.
     ///
-    /// - Parameter port: The port to listen on. Defaults to `8080`.
+    /// When `hotReload` is enabled (the default), the site's root is
+    /// watched for file changes: a change re-runs the pipeline's
+    /// non-terminal steps in place and tells every open browser to reload,
+    /// so edits to pages, templates, components, and assets (including the
+    /// CSS source) appear without a manual refresh. On platforms without
+    /// FSEvents the step serves without hot reload.
+    ///
+    /// - Parameters:
+    ///   - port: The port to listen on. Defaults to `8080`.
+    ///   - hotReload: Whether file changes trigger a rebuild and a browser
+    ///     reload. Defaults to `true`.
     @discardableResult
-    public func serve(port: Int = 8080) -> Site {
-        addStep(ServeSiteStep(port: port))
+    public func serve(port: Int = 8080, hotReload: Bool = true) -> Site {
+        addStep(ServeSiteStep(port: port, hotReload: hotReload))
     }
 
     /// Records a warning to be reported when the build finishes.
@@ -301,6 +318,31 @@ public final class Site {
         warnings.removeAll()
         try prepareOutputDirectory()
         for step in steps {
+            print("  \(step.name)")
+            do {
+                try step.run(site: self)
+            } catch let error as BuildError {
+                throw error
+            } catch {
+                throw BuildError.stepFailed(step: step.name, underlying: error)
+            }
+        }
+        for warning in warnings {
+            print("warning: \(warning)")
+        }
+    }
+
+    /// Re-runs the pipeline's non-terminal steps in place.
+    ///
+    /// Unlike `build()`, the output directory is not removed first, so a
+    /// server serving it can keep answering requests while the site is
+    /// rebuilt. Terminal steps (serving, opening a browser) are skipped.
+    /// Warnings collected during the rebuild are printed when it finishes.
+    ///
+    /// - Throws: A `BuildError` if a step fails.
+    func rebuild() throws {
+        warnings.removeAll()
+        for step in steps where !step.isTerminal {
             print("  \(step.name)")
             do {
                 try step.run(site: self)

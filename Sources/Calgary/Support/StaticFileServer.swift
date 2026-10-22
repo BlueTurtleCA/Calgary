@@ -19,6 +19,13 @@ final class StaticFileServer {
     /// The port the server was asked to listen on.
     private let port: UInt16
 
+    /// Whether hot reload is enabled: the `/__events` endpoint is served and
+    /// a reload script is injected into HTML pages.
+    private let hotReload: Bool
+
+    /// The open event stream connections, so `broadcast(_:)` can reach them.
+    let eventStreams = EventStreamConnections()
+
     #if canImport(Network)
     private var listener: NWListener?
     #endif
@@ -29,10 +36,11 @@ final class StaticFileServer {
     /// `0`, this is the ephemeral port the system assigned.
     private(set) var assignedPort: UInt16 = 0
 
-    init(root: URL, port: UInt16, fileSystem: any FileSystem) {
+    init(root: URL, port: UInt16, fileSystem: any FileSystem, hotReload: Bool = false) {
         self.root = root
         self.port = port
         self.fileSystem = fileSystem
+        self.hotReload = hotReload
     }
 
     /// Starts listening for connections.
@@ -46,9 +54,17 @@ final class StaticFileServer {
 
         let root = self.root
         let fileSystem = self.fileSystem
+        let eventStreams = self.eventStreams
+        let hotReload = self.hotReload
         listener.newConnectionHandler = { connection in
             connection.start(queue: queue)
-            Self.handle(connection: connection, root: root, fileSystem: fileSystem)
+            Self.handle(
+                connection: connection,
+                root: root,
+                fileSystem: fileSystem,
+                eventStreams: eventStreams,
+                hotReload: hotReload
+            )
         }
 
         let started = StartState()
@@ -78,12 +94,18 @@ final class StaticFileServer {
         #endif
     }
 
-    /// Stops listening for connections.
+    /// Stops listening for connections and closes any open event streams.
     func stop() {
         #if canImport(Network)
         listener?.cancel()
         listener = nil
+        eventStreams.cancelAll()
         #endif
+    }
+
+    /// Sends an event to every open event stream connection.
+    func broadcast(_ event: String) {
+        eventStreams.broadcast(event)
     }
 }
 
@@ -91,10 +113,23 @@ final class StaticFileServer {
 
 extension StaticFileServer {
     /// Serves a single connection: reads the request headers, then responds.
-    private static func handle(connection: NWConnection, root: URL, fileSystem: any FileSystem) {
+    private static func handle(
+        connection: NWConnection,
+        root: URL,
+        fileSystem: any FileSystem,
+        eventStreams: EventStreamConnections,
+        hotReload: Bool
+    ) {
         let buffer = RequestBuffer()
         receiveHeaders(from: connection, into: buffer) {
-            respond(to: connection, request: buffer.data, root: root, fileSystem: fileSystem)
+            respond(
+                to: connection,
+                request: buffer.data,
+                root: root,
+                fileSystem: fileSystem,
+                eventStreams: eventStreams,
+                hotReload: hotReload
+            )
         }
     }
 
@@ -124,7 +159,14 @@ extension StaticFileServer {
     private static let headerTerminator = Data("\r\n\r\n".utf8)
 
     /// Parses the request line and serves the requested path.
-    private static func respond(to connection: NWConnection, request: Data, root: URL, fileSystem: any FileSystem) {
+    private static func respond(
+        to connection: NWConnection,
+        request: Data,
+        root: URL,
+        fileSystem: any FileSystem,
+        eventStreams: EventStreamConnections,
+        hotReload: Bool
+    ) {
         let text = String(data: request, encoding: .utf8) ?? ""
         let firstLine = text.split(separator: "\r\n").first.map(String.init) ?? ""
         let parts = firstLine.split(separator: " ")
@@ -142,9 +184,25 @@ extension StaticFileServer {
 
         switch parts[0] {
         case "GET":
-            serve(path: String(parts[1]), head: false, to: connection, root: root, fileSystem: fileSystem)
+            serve(
+                path: String(parts[1]),
+                head: false,
+                to: connection,
+                root: root,
+                fileSystem: fileSystem,
+                eventStreams: eventStreams,
+                hotReload: hotReload
+            )
         case "HEAD":
-            serve(path: String(parts[1]), head: true, to: connection, root: root, fileSystem: fileSystem)
+            serve(
+                path: String(parts[1]),
+                head: true,
+                to: connection,
+                root: root,
+                fileSystem: fileSystem,
+                eventStreams: eventStreams,
+                hotReload: hotReload
+            )
         default:
             send(
                 connection,
@@ -162,7 +220,9 @@ extension StaticFileServer {
         head: Bool,
         to connection: NWConnection,
         root: URL,
-        fileSystem: any FileSystem
+        fileSystem: any FileSystem,
+        eventStreams: EventStreamConnections,
+        hotReload: Bool
     ) {
         // Strip the query string, if any, and percent-decode the path.
         let path = rawPath.split(separator: "?").first.map(String.init) ?? rawPath
@@ -171,6 +231,13 @@ extension StaticFileServer {
         // Reject any attempt to reach above the served root.
         if decoded.split(separator: "/").contains("..") {
             sendNotFound(connection, head: head)
+            return
+        }
+
+        // The event stream endpoint pushes reload notifications to the
+        // browser; it is only available when hot reload is enabled.
+        if hotReload, !head, decoded == "/__events" {
+            sendEventStream(to: connection, streams: eventStreams)
             return
         }
 
@@ -190,12 +257,18 @@ extension StaticFileServer {
         }
 
         do {
-            let body = try fileSystem.read(contentsOf: url)
+            var body = try fileSystem.read(contentsOf: url)
+            let type = contentType(for: url.path)
+            // With hot reload on, HTML pages carry a small script that
+            // listens for reload notifications on the event stream.
+            if !head, hotReload, type.hasPrefix("text/html") {
+                body = injectReloadScript(into: body)
+            }
             send(
                 connection,
                 status: 200,
                 reason: "OK",
-                contentType: contentType(for: url.path),
+                contentType: type,
                 body: body,
                 head: head
             )
@@ -247,6 +320,53 @@ extension StaticFileServer {
         <body><h1>404 Not Found</h1></body>
         </html>
         """.utf8)
+
+    // MARK: - Hot reload
+
+    /// The script injected into served HTML pages so the browser knows to
+    /// reload when the site is rebuilt.
+    private static let reloadScript = "<script>new EventSource(\"/__events\").addEventListener(\"message\", function () { location.reload(); });</script>"
+
+    /// Inserts the reload script into an HTML document, before `</body>`
+    /// when it has one and at the end otherwise.
+    private static func injectReloadScript(into body: Data) -> Data {
+        guard var text = String(data: body, encoding: .utf8) else { return body }
+        if let range = text.range(of: "</body>", options: .backwards) {
+            text.insert(contentsOf: reloadScript, at: range.lowerBound)
+        } else {
+            text += reloadScript
+        }
+        return Data(text.utf8)
+    }
+
+    /// Opens a server-sent events stream: the response headers are sent once
+    /// and the connection stays open, receiving `broadcast(_:)` events until
+    /// the client disconnects.
+    private static func sendEventStream(to connection: NWConnection, streams: EventStreamConnections) {
+        var headers = "HTTP/1.1 200 OK\r\n"
+        headers += "Content-Type: text/event-stream\r\n"
+        headers += "Cache-Control: no-cache\r\n"
+        headers += "Connection: keep-alive\r\n"
+        headers += "\r\n"
+        headers += ": connected\n"
+
+        streams.add(connection)
+        connection.send(content: Data(headers.utf8), completion: .contentProcessed { _ in })
+        listenForDisconnect(on: connection, streams: streams)
+    }
+
+    /// Keeps reading from the connection so a client disconnect is noticed
+    /// and the connection is released.
+    private static func listenForDisconnect(on connection: NWConnection, streams: EventStreamConnections) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { _, _, isComplete, error in
+            if isComplete || error != nil {
+                streams.remove(connection)
+                connection.cancel()
+            } else {
+                listenForDisconnect(on: connection, streams: streams)
+            }
+        }
+    }
 
     /// The Content-Type for a file, by extension.
     private static func contentType(for path: String) -> String {
@@ -311,6 +431,53 @@ extension StaticFileServer {
 /// Accumulates the bytes of an in-flight request.
 private final class RequestBuffer: @unchecked Sendable {
     var data = Data()
+}
+
+/// The open event stream connections, shared between the connection
+/// handlers and `broadcast(_:)`.
+final class EventStreamConnections: @unchecked Sendable {
+    private let lock = NSLock()
+    private var connections: [NWConnection] = []
+
+    func add(_ connection: NWConnection) {
+        lock.lock()
+        connections.append(connection)
+        lock.unlock()
+    }
+
+    func remove(_ connection: NWConnection) {
+        lock.lock()
+        connections.removeAll { $0 === connection }
+        lock.unlock()
+    }
+
+    var all: [NWConnection] {
+        lock.lock()
+        defer { lock.unlock() }
+        return connections
+    }
+
+    /// Sends an event to every open connection, dropping any that fail.
+    func broadcast(_ event: String) {
+        let payload = Data("data: \(event)\n\n".utf8)
+        for connection in all {
+            connection.send(content: payload, completion: .contentProcessed { error in
+                if error != nil {
+                    self.remove(connection)
+                }
+            })
+        }
+    }
+
+    func cancelAll() {
+        lock.lock()
+        let connections = self.connections
+        self.connections = []
+        lock.unlock()
+        for connection in connections {
+            connection.cancel()
+        }
+    }
 }
 
 /// A one-shot signal that reports when the listener becomes ready or fails.

@@ -31,4 +31,9 @@ struct OpenSiteStepTests {
     func nameIncludesPage() {
         #expect(OpenSiteStep(page: "index.html").name == "Open 'index.html'")
     }
+
+    @Test("Opening is a terminal step")
+    func openIsTerminal() {
+        #expect(OpenSiteStep(page: "index.html").isTerminal)
+    }
 }

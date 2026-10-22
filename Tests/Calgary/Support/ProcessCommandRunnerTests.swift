@@ -5,8 +5,9 @@ import Testing
 /// Tests for the real `ProcessCommandRunner`.
 ///
 /// These run small, side-effect-free system commands (`echo`, `sh`, `pwd`)
-/// so the production path — PATH resolution, output capture, working
-/// directory — is covered without touching the project's files.
+/// and temporary shell scripts, so the production path — PATH resolution,
+/// output capture, working directory — is covered without touching the
+/// project's files.
 @Suite("ProcessCommandRunner")
 struct ProcessCommandRunnerTests {
     private let runner = ProcessCommandRunner()
@@ -58,5 +59,58 @@ struct ProcessCommandRunnerTests {
                 workingDirectory: URL(fileURLWithPath: "/")
             )
         }
+    }
+
+    @Test("Falls back to the additional search directories when the command is not on PATH")
+    func resolvesFromAdditionalSearchDirectories() throws {
+        let directory = try makeScriptDirectory(named: "calgary-fake-command", body: "echo fake")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let runner = ProcessCommandRunner(
+            environment: ["PATH": "/nonexistent"],
+            additionalSearchDirectories: [directory]
+        )
+        let result = try runner.run(
+            command: "calgary-fake-command",
+            arguments: [],
+            workingDirectory: URL(fileURLWithPath: "/")
+        )
+
+        #expect(result.exitCode == 0)
+        #expect(String(data: result.standardOutput, encoding: .utf8) == "fake\n")
+    }
+
+    @Test("Prepends the resolved executable's directory to the child's PATH")
+    func prependsExecutableDirectoryToChildPath() throws {
+        let directory = try makeScriptDirectory(named: "calgary-print-path", body: "echo $PATH")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let runner = ProcessCommandRunner(
+            environment: ["PATH": "/nonexistent"],
+            additionalSearchDirectories: [directory]
+        )
+        let result = try runner.run(
+            command: "calgary-print-path",
+            arguments: [],
+            workingDirectory: URL(fileURLWithPath: "/")
+        )
+
+        let path = String(data: result.standardOutput, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        #expect(path.components(separatedBy: ":").first == directory.path)
+    }
+
+    /// Writes a shell script named `name` into a fresh temporary directory
+    /// and returns the directory, so tests can resolve commands that are
+    /// not on the test process's `PATH`.
+    private func makeScriptDirectory(named name: String, body: String) throws -> URL {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory
+            .appendingPathComponent("calgary-runner-\(UUID().uuidString)")
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let script = directory.appendingPathComponent(name)
+        try "#!/bin/sh\n\(body)\n".write(to: script, atomically: true, encoding: .utf8)
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        return directory
     }
 }

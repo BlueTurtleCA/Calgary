@@ -16,6 +16,8 @@ struct OpenSiteStep: BuildStep {
         "Open '\(page)'"
     }
 
+    var isTerminal: Bool { true }
+
     func run(site: Site) throws {
         let url = site.outputDirectory.appendingPathComponent(page)
         guard site.fileSystem.fileExists(atPath: url.path) else {

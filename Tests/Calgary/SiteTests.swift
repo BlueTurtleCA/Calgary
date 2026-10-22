@@ -167,6 +167,32 @@ struct SiteTests {
             Issue.record("Expected a BuildError, got \(error)")
         }
     }
+
+    @Test("rebuild() re-runs non-terminal steps without wiping the output")
+    func rebuildRerunsNonTerminalStepsInPlace() throws {
+        let fileSystem = InMemoryFileSystem()
+        try writeFile("kept", at: "build/kept.html", relativeTo: virtualRoot, in: fileSystem)
+        let recorder = StepRecorder()
+        let site = Site(name: "Test Site", root: virtualRoot, fileSystem: fileSystem)
+            .addStep(RecordingStep(label: "work", recorder: recorder))
+            .addStep(TerminalStep(label: "terminal", recorder: recorder))
+
+        try site.rebuild()
+
+        #expect(try readFile(at: "build/kept.html", relativeTo: virtualRoot, in: fileSystem) == "kept")
+        #expect(recorder.entries == ["work"])
+    }
+
+    @Test("rebuild() rethrows BuildErrors from steps without wrapping them")
+    func rebuildRethrowsBuildErrors() throws {
+        let fileSystem = InMemoryFileSystem()
+        let site = Site(name: "Test Site", root: virtualRoot, fileSystem: fileSystem)
+            .addStep(FailingStep(name: "Failing step", error: BuildError.missingPath("/missing")))
+
+        #expect(throws: BuildError.missingPath("/missing")) {
+            try site.rebuild()
+        }
+    }
 }
 
 /// Records the labels of the steps that run, in order.
@@ -184,6 +210,20 @@ private struct RecordingStep: BuildStep {
     let recorder: StepRecorder
 
     var name: String { label }
+
+    func run(site: Site) throws {
+        recorder.record(label)
+    }
+}
+
+/// A step that records its label when it runs and is skipped by rebuilds.
+private struct TerminalStep: BuildStep {
+    let label: String
+    let recorder: StepRecorder
+
+    var name: String { label }
+
+    var isTerminal: Bool { true }
 
     func run(site: Site) throws {
         recorder.record(label)

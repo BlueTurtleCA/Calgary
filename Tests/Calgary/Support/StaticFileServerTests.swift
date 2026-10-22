@@ -17,11 +17,12 @@ struct StaticFileServerTests {
     }
 
     /// Starts a server on an ephemeral port serving the given file system.
-    private func startServer(fileSystem: any FileSystem) throws -> StaticFileServer {
+    private func startServer(fileSystem: any FileSystem, hotReload: Bool = false) throws -> StaticFileServer {
         let server = StaticFileServer(
             root: virtualRoot.appendingPathComponent("build"),
             port: 0,
-            fileSystem: fileSystem
+            fileSystem: fileSystem,
+            hotReload: hotReload
         )
         try server.start()
         return server
@@ -156,6 +157,125 @@ struct StaticFileServerTests {
         )
         #expect(throws: BuildError.portInUse(port: Int(first.assignedPort))) {
             try second.start()
+        }
+    }
+
+    @Test("Injects the reload script before </body> when hot reload is on")
+    func injectsReloadScriptBeforeBodyClose() async throws {
+        let fileSystem = try makeFileSystem()
+        try writeFile("<html><body>page</body></html>", at: "build/page.html", relativeTo: virtualRoot, in: fileSystem)
+        let server = try startServer(fileSystem: fileSystem, hotReload: true)
+        defer { server.stop() }
+
+        let (status, _, body) = try await request(server, "/page.html")
+        #expect(status == 200)
+        let html = String(data: body, encoding: .utf8) ?? ""
+        let script = html.range(of: "EventSource")
+        let bodyClose = html.range(of: "</body>")
+        #expect(script != nil)
+        #expect(bodyClose != nil)
+        if let script, let bodyClose {
+            #expect(script.lowerBound < bodyClose.lowerBound)
+        }
+    }
+
+    @Test("Appends the reload script when the page has no </body>")
+    func appendsReloadScriptWithoutBodyClose() async throws {
+        let server = try startServer(fileSystem: try makeFileSystem(), hotReload: true)
+        defer { server.stop() }
+
+        let (status, _, body) = try await request(server, "/")
+        #expect(status == 200)
+        let html = String(data: body, encoding: .utf8) ?? ""
+        #expect(html.hasPrefix("<html>home</html>"))
+        #expect(html.contains("EventSource"))
+    }
+
+    @Test("Does not inject the reload script when hot reload is off")
+    func noInjectionWhenHotReloadIsOff() async throws {
+        let server = try startServer(fileSystem: try makeFileSystem())
+        defer { server.stop() }
+
+        let (status, _, body) = try await request(server, "/")
+        #expect(status == 200)
+        #expect(String(data: body, encoding: .utf8) == "<html>home</html>")
+    }
+
+    @Test("Does not inject the reload script into non-HTML files")
+    func noInjectionIntoCSS() async throws {
+        let server = try startServer(fileSystem: try makeFileSystem(), hotReload: true)
+        defer { server.stop() }
+
+        let (status, _, body) = try await request(server, "/css/site.css")
+        #expect(status == 200)
+        #expect(String(data: body, encoding: .utf8) == "body {}")
+    }
+
+    @Test("Streams broadcast events to /__events when hot reload is on")
+    func eventStreamReceivesBroadcasts() async throws {
+        let server = try startServer(fileSystem: try makeFileSystem(), hotReload: true)
+        defer { server.stop() }
+
+        guard let url = URL(string: "http://127.0.0.1:\(server.assignedPort)/__events") else {
+            throw TestError.invalidURL
+        }
+        let (bytes, response) = try await URLSession.shared.bytes(for: URLRequest(url: url))
+        let http = try #require(response as? HTTPURLResponse)
+        #expect(http.statusCode == 200)
+        #expect(http.value(forHTTPHeaderField: "Content-Type") == "text/event-stream")
+
+        // The stream opens with a comment line, then receives broadcasts.
+        let reader = EventLineReader(bytes: bytes)
+        #expect(try await reader.nextLine() == ": connected")
+
+        server.broadcast("reload")
+        #expect(try await reader.nextLine() == "data: reload")
+    }
+
+    @Test("Returns 404 for /__events when hot reload is off")
+    func eventStreamUnavailableWhenHotReloadIsOff() async throws {
+        let server = try startServer(fileSystem: try makeFileSystem())
+        defer { server.stop() }
+
+        let (status, _, _) = try await request(server, "/__events")
+        #expect(status == 404)
+    }
+
+    @Test("Stopping the server ends open event streams")
+    func stopEndsEventStreams() async throws {
+        let server = try startServer(fileSystem: try makeFileSystem(), hotReload: true)
+        guard let url = URL(string: "http://127.0.0.1:\(server.assignedPort)/__events") else {
+            throw TestError.invalidURL
+        }
+        let (bytes, _) = try await URLSession.shared.bytes(for: URLRequest(url: url))
+        let reader = EventLineReader(bytes: bytes)
+        #expect(try await reader.nextLine() == ": connected")
+
+        server.stop()
+        #expect(try await reader.nextLine() == nil)
+    }
+}
+
+/// Reads lines from an event stream one at a time.
+private final class EventLineReader {
+    private var iterator: URLSession.AsyncBytes.AsyncIterator?
+
+    init(bytes: URLSession.AsyncBytes) {
+        iterator = bytes.makeAsyncIterator()
+    }
+
+    /// Reads the next line (up to the next newline), or nil when the stream
+    /// ends.
+    func nextLine() async throws -> String? {
+        var line = ""
+        while true {
+            guard let byte = try await iterator?.next() else {
+                return line.isEmpty ? nil : line
+            }
+            if byte == 0x0A {
+                return line
+            }
+            line.unicodeScalars.append(UnicodeScalar(byte))
         }
     }
 }
