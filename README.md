@@ -112,6 +112,20 @@ Markdown components are rendered to HTML first, then pass through the template e
 - `{{ variable }}` — interpolation; dot notation supported (`{{ site.name }}`)
 - `{% include "path" %}` — include a component (or template)
 - `{% include "path" key="value" %}` — include with variables; the arguments are visible inside the component (and its nested includes) and shadow same-named outer variables
+- `{% include "path" key={{ variable }} %}` — include with a variable argument; the value is resolved from the current context and keeps its type
+- `{% if condition %} … {% else %} … {% endif %}` — conditional; `else` is optional and nesting is supported
+
+A condition is a bare variable (a truthiness check) or a `==`/`!=` comparison. Operands are quoted strings, numbers, or variables:
+
+```html
+{% if page.locale == "en" %}
+  <p>English version</p>
+{% else %}
+  <p>Other locale</p>
+{% endif %}
+```
+
+A bare variable is an existence check: a missing variable is false. In a comparison, a missing variable fails the build, as do an unclosed `{% if %}` and a stray `{% else %}` or `{% endif %}`.
 
 Built-in variables: `site.name`, `page.url`, and `page.date` (when declared). When the site is localized, pages also get `page.locale`, `site.defaultLocale`, and `page.alternates` (see [Localization](#localization)). Variables from a page's frontmatter override built-ins.
 
@@ -267,6 +281,6 @@ Xcode's run button works too: when a command is missing from the minimal `PATH` 
 
 ## Design notes
 
-- **No full template engine.** Interpolation + includes is a small custom engine; `{% if %}`/`{% for %}` would be a contained extension if ever needed.
+- **No full template engine.** Interpolation, includes, and basic conditionals are a small custom engine; `{% for %}` would be a contained extension if ever needed.
 - **Smart punctuation is disabled** when rendering markdown, so quotes and template tags pass through literally.
 - **No config file.** If it isn't in the pipeline file, it isn't part of the build.

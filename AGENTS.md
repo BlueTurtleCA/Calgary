@@ -34,7 +34,7 @@ Calgary/
 │   │   │   ├── FileSystem.swift              # file-system protocol + local implementation
 │   │   │   └── CommandRunner.swift           # command-execution protocol + Process implementation
 │   │   ├── Engine/
-│   │   │   ├── TemplateEngine.swift          # {{ var }} interpolation + includes
+│   │   │   ├── TemplateEngine.swift          # {{ var }} interpolation, includes, conditionals
 │   │   │   ├── Variables.swift               # dot-notation variable context
 │   │   │   └── ComponentResolver.swift       # lookup, recursion, cycle detection
 │   │   ├── Localization/
@@ -117,6 +117,8 @@ Markdown (`.md`) or raw HTML (`.html`) partials. They may use variables and incl
 - `{{ variable }}` — interpolation (dot notation supported: `{{ site.name }}`)
 - `{% include "path" %}` — component/template include
 - `{% include "path" key="value" %}` — include with variables; arguments are visible inside the component (and its nested includes) and shadow same-named outer variables
+- `{% include "path" key={{ variable }} %}` — include with a variable argument; the value is resolved from the current context and keeps its type
+- `{% if condition %} … {% else %} … {% endif %}` — basic conditional: a bare variable (truthiness; a missing variable is false) or a `==`/`!=` comparison of quoted strings, numbers, or variables; `else` is optional, nesting is supported, and a missing variable in a comparison fails the build
 
 Single-brace shorthand (`{title}`, `{components/hero}`) was considered but rejected: single braces collide with markdown, JSON, and CSS in real content. If the exact shorthand is ever wanted, it is a one-regex change in `TemplateEngine`.
 
@@ -178,7 +180,7 @@ struct Main {
 
 1. Read the page, split frontmatter (Yams) → `template`, `date`, variables.
 2. Merge variables: built-ins (`site.name`, `page.url`, `page.date` when declared; `page.locale`, `site.defaultLocale`, `page.alternates` when localized) + the site's `templateVariables` under `site` (overriding built-ins) + frontmatter (frontmatter wins) + the page's locale strings under `strings` (when localized).
-3. Resolve `{% include %}`s recursively. Markdown components render to HTML first, then pass through the template engine (so components can nest and use variables). Cycle detection via a resolution stack.
+3. Evaluate `{% if %}` conditionals, then resolve `{% include %}`s recursively. Markdown components render to HTML first, then pass through the template engine (so components can nest and use variables). Cycle detection via a resolution stack.
 4. Render remaining markdown → HTML via swift-markdown, with smart punctuation disabled so quotes and template tags pass through literally.
 5. Inject as `{{ content }}` into the template, interpolate, write output. Path mirrors source: `blog/post.md` → `build/blog/post.html`.
 6. When localized, a default-locale HTML page is re-rendered for every declared locale that has no explicit translation file (output under `/<locale>/`); a default-locale markdown page with a missing translation produces a warning instead.
@@ -192,7 +194,7 @@ struct Main {
 
 The sample site additionally needs Node: `tailwindcss` and `@tailwindcss/cli` are declared in `Sources/Example/package.json`. After cloning, run `npm install` in `Sources/Example` once; the pipeline then runs the CLI via `npx`.
 
-Deliberately **no** Stencil/Handlebars: a custom engine with interpolation + includes is ~200 lines, matches the syntax exactly, and avoids a full engine we'd only use 10% of. `{% if %}`/`{% for %}` (if ever needed) is a contained extension to the same engine.
+Deliberately **no** Stencil/Handlebars: a custom engine with interpolation, includes, and basic conditionals is a few hundred lines, matches the syntax exactly, and avoids a full engine we'd only use 10% of. `{% for %}` (if ever needed) is a contained extension to the same engine.
 
 ## Working in this repo
 

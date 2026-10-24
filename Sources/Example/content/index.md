@@ -10,7 +10,7 @@ This page was built by **Calgary**, a static site generator where the build
 pipeline is Swift code. The header and footer are components — plain HTML
 files that the template includes.
 
-{% include "components/hero" %}
+{% include "components/hero" title="{{ title }}" %}
 
 ## How this page is built
 

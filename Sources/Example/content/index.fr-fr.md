@@ -10,7 +10,7 @@ Cette page a été construite avec **Calgary**, un générateur de sites statiqu
 dont le pipeline de build est du code Swift. L'en-tête et le pied de page sont
 des composants — de simples fichiers HTML que le template inclut.
 
-{% include "components/hero" %}
+{% include "components/hero" title="{{ title }}" %}
 
 ## Comment cette page est construite
 

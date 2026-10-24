@@ -51,4 +51,30 @@ struct VariablesTests {
         #expect(Variable.number(1.5).stringValue == "1.5")
         #expect(Variable.boolean(true).stringValue == "true")
     }
+
+    @Test("Reports truthiness for each value kind")
+    func reportsTruthyForEachValueKind() {
+        #expect(Variable.string("hi").isTruthy)
+        #expect(!Variable.string("").isTruthy)
+        #expect(Variable.integer(5).isTruthy)
+        #expect(!Variable.integer(0).isTruthy)
+        #expect(Variable.number(1.5).isTruthy)
+        #expect(!Variable.number(0).isTruthy)
+        #expect(Variable.boolean(true).isTruthy)
+        #expect(!Variable.boolean(false).isTruthy)
+        #expect(Variable.list([.string("a")]).isTruthy)
+        #expect(!Variable.list([]).isTruthy)
+        #expect(Variable.map(["a": .string("x")]).isTruthy)
+        #expect(!Variable.map([:]).isTruthy)
+    }
+
+    @Test("Compares scalar values across types by string form")
+    func comparesScalarValuesAcrossTypes() {
+        #expect(Variable.integer(3).isEqualTo(.string("3")))
+        #expect(Variable.string("3").isEqualTo(.integer(3)))
+        #expect(!Variable.integer(3).isEqualTo(.string("4")))
+        #expect(Variable.string("hi").isEqualTo(.string("hi")))
+        #expect(!Variable.string("hi").isEqualTo(.string("there")))
+        #expect(!Variable.list([.string("3")]).isEqualTo(.string("3")))
+    }
 }
