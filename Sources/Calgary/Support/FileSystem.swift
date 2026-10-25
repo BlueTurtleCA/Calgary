@@ -47,6 +47,35 @@ public protocol FileSystem: Sendable {
     func read(contentsOf url: URL) throws -> Data
 }
 
+extension FileSystem {
+    /// Recursively collects the files under `directory`, sorted by path.
+    ///
+    /// Directories are not included in the result.
+    func files(in directory: URL) throws -> [URL] {
+        var results: [URL] = []
+        func walk(_ current: URL) throws {
+            for entry in try contentsOfDirectory(at: current) {
+                if isDirectory(atPath: entry.path) {
+                    try walk(entry)
+                } else {
+                    results.append(entry)
+                }
+            }
+        }
+        try walk(directory)
+        return results.sorted { $0.path < $1.path }
+    }
+
+    /// The path of `url` relative to `base`, or the full path of `url` when
+    /// it is not below `base`.
+    func relativePath(of url: URL, to base: URL) -> String {
+        let basePath = base.path
+        let path = url.path
+        guard path.hasPrefix(basePath) else { return path }
+        return String(path.dropFirst(basePath.count + 1))
+    }
+}
+
 /// A `FileSystem` backed by `FileManager`.
 public struct LocalFileSystem: FileSystem {
     public init() {}

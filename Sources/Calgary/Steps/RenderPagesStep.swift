@@ -95,7 +95,7 @@ struct RenderPagesStep: BuildStep {
         let isHTMLPage = pageURL.path.hasSuffix(".html")
         let page = isHTMLPage ? try Frontmatter.parseHTML(text) : try Frontmatter.parse(text)
 
-        let relative = relativePath(of: pageURL, to: site.sourceDirectory)
+        let relative = site.fileSystem.relativePath(of: pageURL, to: site.sourceDirectory)
         let locale = localeOverride ?? Self.locale(of: relative, in: site.localization)
         let defaultLocale = site.localization?.defaultLocale ?? "default"
         let outputRelative = Self.outputPath(for: relative, locale: locale, defaultLocale: defaultLocale)
@@ -392,71 +392,8 @@ struct RenderPagesStep: BuildStep {
     // MARK: Page discovery
 
     private func pageFiles(in directory: URL, glob: String, fileSystem: any FileSystem) throws -> [URL] {
-        var results: [URL] = []
-        func walk(_ current: URL) throws {
-            for entry in try fileSystem.contentsOfDirectory(at: current) {
-                if fileSystem.isDirectory(atPath: entry.path) {
-                    try walk(entry)
-                } else if matches(glob: glob, path: relativePath(of: entry, to: directory)) {
-                    results.append(entry)
-                }
-            }
+        try fileSystem.files(in: directory).filter {
+            Glob.matches(glob, path: fileSystem.relativePath(of: $0, to: directory))
         }
-        try walk(directory)
-        return results.sorted { $0.path < $1.path }
-    }
-
-    private func relativePath(of url: URL, to base: URL) -> String {
-        let basePath = base.path
-        let path = url.path
-        guard path.hasPrefix(basePath) else { return path }
-        return String(path.dropFirst(basePath.count + 1))
-    }
-
-    /// Matches a relative path against a glob. Supports `*` (any characters
-    /// except `/`), `**/` (any number of directories, including none), and
-    /// `{a,b}` (alternation).
-    private func matches(glob: String, path: String) -> Bool {
-        guard let pattern = Self.globPattern(from: glob) else { return false }
-        guard let regex = try? NSRegularExpression(pattern: "^" + pattern + "$") else { return false }
-        return regex.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)) != nil
-    }
-
-    /// Converts a glob into a regular-expression pattern, or `nil` if the
-    /// glob is malformed (an unterminated `{`).
-    private static func globPattern(from glob: String) -> String? {
-        var pattern = ""
-        var index = glob.startIndex
-        while index < glob.endIndex {
-            let character = glob[index]
-            if character == "*" {
-                if glob[index...].hasPrefix("**/") {
-                    pattern += "(?:[^/]+/)*"
-                    index = glob.index(index, offsetBy: 3)
-                    continue
-                } else if glob[index...].hasPrefix("**") {
-                    pattern += ".*"
-                    index = glob.index(index, offsetBy: 2)
-                    continue
-                } else {
-                    pattern += "[^/]*"
-                }
-            } else if character == "{" {
-                guard let close = glob[index...].firstIndex(of: "}") else { return nil }
-                let alternatives = glob[glob.index(after: index)..<close]
-                    .split(separator: ",")
-                    .compactMap { globPattern(from: String($0)) }
-                guard !alternatives.isEmpty else { return nil }
-                pattern += "(?:" + alternatives.joined(separator: "|") + ")"
-                index = glob.index(after: close)
-                continue
-            } else if ".\\+?()[]{}^$|".contains(character) {
-                pattern += "\\" + String(character)
-            } else {
-                pattern += String(character)
-            }
-            index = glob.index(after: index)
-        }
-        return pattern
     }
 }

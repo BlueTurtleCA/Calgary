@@ -43,6 +43,8 @@ struct Main {
         .registerTemplates(in: "templates")
         .registerComponents(in: "components")
         .renderPages()
+        .minify()
+        .generateSitemap(baseUrl: "https://example.com")
 
         // The sample opens the built file by default, so the build always
         // finishes. Pass --serve to serve the site over HTTP instead, which

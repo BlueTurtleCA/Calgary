@@ -196,8 +196,12 @@ swift run MySite
 | `registerComponents(in:)` | Registers the components directory |
 | `localize(defaultLocale:locales:strings:)` | Configures locales and the strings source (YAML directory or `.xcstrings` catalog); translations render under `/<locale>/` |
 | `renderPages(glob:)` | Renders every page matching the glob (default `**/*.{md,html}`) into its template |
+| `minify(glob:)` | Minifies output files matching the glob (default `**/*.{html,css}`): strips HTML and CSS comments and collapses whitespace; raw HTML elements (`<script>`, `<style>`, `<textarea>`, `<pre>`, `<code>`) and CSS strings are untouched |
+| `generateSitemap(baseUrl:)` | Writes `sitemap.xml` listing every `.html` file in the output under `baseUrl`; run after `renderPages` |
 | `open(_:)` | Opens a built page in the default browser (Apple platforms) |
 | `addStep(_:)` | Adds a custom step |
+
+`robots.txt` is a plain file, not a step: put it in `assets/` and `copyAssets` ships it.
 
 ### Custom steps
 

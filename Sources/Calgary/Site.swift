@@ -260,6 +260,57 @@ public final class Site: @unchecked Sendable {
         addStep(RenderPagesStep(glob: glob))
     }
 
+    /// Adds a step that minifies the site's output.
+    ///
+    /// Files matching `glob` (relative to the output directory) are
+    /// rewritten in place: HTML files have their comments removed and their
+    /// whitespace collapsed, and CSS files have their comments removed and
+    /// their whitespace collapsed. The contents of raw HTML elements
+    /// (`<script>`, `<style>`, `<textarea>`, `<pre>`, and `<code>`) and of
+    /// CSS strings are left untouched.
+    ///
+    /// Because the step rewrites files in the output directory, it runs
+    /// after the steps that produce them:
+    ///
+    /// ```swift
+    /// site.copyAssets(from: "assets")
+    ///     .renderPages()
+    ///     .minify()
+    /// ```
+    ///
+    /// JavaScript is not minified: a matched file that is not `.html` or
+    /// `.css` is skipped with a warning. Run a real minifier with
+    /// `executeCommand` if a site needs JS minification.
+    ///
+    /// - Parameter glob: The output files to minify. Defaults to
+    ///   `"**/*.{html,css}"`.
+    @discardableResult
+    public func minify(glob: String = "**/*.{html,css}") -> Site {
+        addStep(MinifyStep(glob: glob))
+    }
+
+    /// Adds a step that writes a `sitemap.xml` of the site's pages to the
+    /// output directory.
+    ///
+    /// The sitemap lists every `.html` file in the output directory under
+    /// `baseUrl`, so the step runs after the steps that produce pages:
+    ///
+    /// ```swift
+    /// site.renderPages()
+    ///     .generateSitemap(baseUrl: "https://example.com")
+    /// ```
+    ///
+    /// `index.html` files are listed as their directory's URL: the root
+    /// `index.html` becomes `https://example.com/`, and `fr-fr/index.html`
+    /// becomes `https://example.com/fr-fr/`.
+    ///
+    /// - Parameter baseUrl: The site's public base URL, for example
+    ///   `"https://example.com"`.
+    @discardableResult
+    public func generateSitemap(baseUrl: String) -> Site {
+        addStep(SitemapStep(baseUrl: baseUrl))
+    }
+
     /// Adds a step that opens a built page in the default browser.
     ///
     /// - Parameter page: The page to open, relative to the output directory.

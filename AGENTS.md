@@ -28,11 +28,20 @@ Calgary/
 │   │   │   ├── BuildStep.swift               # step protocol + BuildError
 │   │   │   ├── CopyAssetsStep.swift
 │   │   │   ├── ExecuteCommandStep.swift      # run external commands (CSS build, etc.)
+│   │   │   ├── MinifyStep.swift              # strip comments/whitespace from HTML and CSS
 │   │   │   ├── RenderPagesStep.swift         # frontmatter + engine + markdown → HTML
-│   │   │   └── OpenSiteStep.swift            # opens a built page (Apple platforms)
+│   │   │   ├── SitemapStep.swift             # write sitemap.xml
+│   │   │   ├── OpenSiteStep.swift            # opens a built page (Apple platforms)
+│   │   │   └── ServeSiteStep.swift           # serve the site over HTTP (hot reload)
 │   │   ├── Support/                          # abstractions over system capabilities
 │   │   │   ├── FileSystem.swift              # file-system protocol + local implementation
-│   │   │   └── CommandRunner.swift           # command-execution protocol + Process implementation
+│   │   │   ├── CommandRunner.swift           # command-execution protocol + Process implementation
+│   │   │   ├── Glob.swift                    # glob matching for file paths
+│   │   │   ├── FileWatcher.swift             # FSEvents-based file watching
+│   │   │   └── StaticFileServer.swift        # HTTP server for the serve step
+│   │   ├── Minify/
+│   │   │   ├── HTMLMinifier.swift            # comments/whitespace; raw elements untouched
+│   │   │   └── CSSMinifier.swift             # comments/whitespace; strings untouched
 │   │   ├── Engine/
 │   │   │   ├── TemplateEngine.swift          # {{ var }} interpolation, includes, conditionals
 │   │   │   ├── Variables.swift               # dot-notation variable context
@@ -57,11 +66,17 @@ Calgary/
     ├── Frontmatter/FrontmatterTests.swift
     ├── Localization/StringTableTests.swift
     ├── Markdown/MarkdownRendererTests.swift
+    ├── Minify/
+    │   ├── CSSMinifierTests.swift
+    │   └── HTMLMinifierTests.swift
     ├── Steps/                                # step tests (in-memory file system + mock runner)
     │   ├── CopyAssetsStepTests.swift
     │   ├── ExecuteCommandStepTests.swift
+    │   ├── MinifyStepTests.swift
     │   ├── OpenSiteStepTests.swift
-    │   └── RenderPagesStepTests.swift
+    │   ├── RenderPagesStepTests.swift
+    │   ├── SitemapStepTests.swift
+    │   └── ServeSiteStepTests.swift
     └── Support/
         ├── InMemoryFileSystem.swift          # in-memory FileSystem for tests
         ├── MockCommandRunner.swift           # scripted CommandRunner for tests
@@ -157,6 +172,8 @@ struct Main {
         .registerTemplates(in: "templates")
         .registerComponents(in: "components")
         .renderPages()
+        .minify()
+        .generateSitemap(baseUrl: "https://example.com")
         .open("index.html")
 
         do {
