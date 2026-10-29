@@ -114,6 +114,7 @@ Markdown components are rendered to HTML first, then pass through the template e
 - `{% include "path" key="value" %}` — include with variables; the arguments are visible inside the component (and its nested includes) and shadow same-named outer variables
 - `{% include "path" key={{ variable }} %}` — include with a variable argument; the value is resolved from the current context and keeps its type
 - `{% if condition %} … {% else %} … {% endif %}` — conditional; `else` is optional and nesting is supported
+- `{% for item in items %} … {% else %} … {% endfor %}` — loop over a list; the item is available as `{{ item }}` (dot notation for map items), and the optional `else` branch renders when the list is empty
 
 A condition is a bare variable (a truthiness check) or a `==`/`!=` comparison. Operands are quoted strings, numbers, or variables:
 
@@ -125,9 +126,17 @@ A condition is a bare variable (a truthiness check) or a `==`/`!=` comparison. O
 {% endif %}
 ```
 
-A bare variable is an existence check: a missing variable is false. In a comparison, a missing variable fails the build, as do an unclosed `{% if %}` and a stray `{% else %}` or `{% endif %}`.
+A bare variable is an existence check: a missing variable is false. In a comparison, a missing variable fails the build, as do an unclosed `{% if %}` and a stray `{% else %}` or `{% endif %}`. A `{% for %}` collection must be a list (a missing or non-list variable fails the build), as do an unclosed `{% for %}` and a stray `{% endfor %}`.
 
-Built-in variables: `site.name`, `page.url`, and `page.date` (when declared). When the site is localized, pages also get `page.locale`, `site.defaultLocale`, and `page.alternates` (see [Localization](#localization)). Variables from a page's frontmatter override built-ins.
+Built-in variables: `site.name`, `page.url`, and `page.date` (when declared). When the site is created with a `baseUrl`, pages also get `page.canonical` — the page's absolute URL, ready to paste into `<link rel="canonical">`. When the site is localized, pages also get `page.locale`, `site.defaultLocale`, and `page.alternates` (see [Localization](#localization)). Variables from a page's frontmatter override built-ins.
+
+`site.pages` is a list of the site's pages, each with `title`, `url`, `locale`, and (when declared) `date`. A page's `title` is its `title` frontmatter variable, falling back to the file name. Use it with `{% for %}` to build listing pages and navigation:
+
+```html
+{% for page in site.pages %}
+  <a href="{{ page.url }}">{{ page.title }}</a>
+{% endfor %}
+```
 
 Site-wide variables can be declared in the pipeline and are exposed under the `site` namespace:
 
@@ -236,6 +245,7 @@ A `Site` is a list of steps, run in order by `build()` (which first removes and 
 | `registerComponents(in:)` | Registers the components directory |
 | `localize(defaultLocale:locales:strings:)` | Configures the site's locales and strings source (YAML directory or `.xcstrings` catalog); translations render under `/<locale>/` |
 | `renderPages(glob:)` | Renders every page matching the glob (default `**/*.md`) into its template |
+| `generateSitemap(baseUrl:)` | Writes `sitemap.xml` of every built page under the base URL (defaulting to the site's `baseUrl`), with a `<lastmod>` per page (frontmatter `date`, falling back to file modification time) and, for localized sites, `hreflang` alternates |
 | `open(_:)` | Opens a built page in the default browser (Apple platforms) |
 | `serve(port:hotReload:)` | Serves the built site over HTTP and keeps the process running; with hot reload (the default), a file change rebuilds the site in place and reloads the browser |
 | `addStep(_:)` | Adds a custom step |
@@ -281,6 +291,6 @@ Xcode's run button works too: when a command is missing from the minimal `PATH` 
 
 ## Design notes
 
-- **No full template engine.** Interpolation, includes, and basic conditionals are a small custom engine; `{% for %}` would be a contained extension if ever needed.
+- **No full template engine.** Interpolation, includes, conditionals, and loops are a small custom engine.
 - **Smart punctuation is disabled** when rendering markdown, so quotes and template tags pass through literally.
 - **No config file.** If it isn't in the pipeline file, it isn't part of the build.

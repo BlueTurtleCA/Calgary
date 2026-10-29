@@ -45,6 +45,10 @@ public protocol FileSystem: Sendable {
 
     /// Returns the contents of the file at `url`.
     func read(contentsOf url: URL) throws -> Data
+
+    /// The date the file at `url` was last modified, or `nil` if the file
+    /// does not exist.
+    func modificationDate(of url: URL) -> Date?
 }
 
 extension FileSystem {
@@ -115,5 +119,12 @@ public struct LocalFileSystem: FileSystem {
 
     public func read(contentsOf url: URL) throws -> Data {
         try Data(contentsOf: url)
+    }
+
+    public func modificationDate(of url: URL) -> Date? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+            return nil
+        }
+        return attributes[.modificationDate] as? Date
     }
 }

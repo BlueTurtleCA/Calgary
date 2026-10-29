@@ -16,6 +16,14 @@ enum TemplateError: Error, Equatable, CustomStringConvertible {
     case unexpectedConditionalTag(String)
     /// An `{% if %}` condition could not be parsed.
     case invalidCondition(String)
+    /// A `{% for %}` has no matching `{% endfor %}`.
+    case unclosedLoop(String)
+    /// An `{% endfor %}` appears without a matching `{% for %}`.
+    case unexpectedLoopTag(String)
+    /// A `{% for %}` clause is not of the form `item in collection`.
+    case invalidLoop(String)
+    /// A `{% for %}` collection is not a list.
+    case notAList(String)
 
     var description: String {
         switch self {
@@ -33,6 +41,14 @@ enum TemplateError: Error, Equatable, CustomStringConvertible {
             return "Unexpected {% \(tag) %}: no matching {% if %}"
         case .invalidCondition(let condition):
             return "Invalid condition: \(condition)"
+        case .unclosedLoop(let clause):
+            return "Unclosed loop: {% for \(clause) %} has no {% endfor %}"
+        case .unexpectedLoopTag(let tag):
+            return "Unexpected {% \(tag) %}: no matching {% for %}"
+        case .invalidLoop(let clause):
+            return "Invalid loop: {% for \(clause) %} — expected 'item in collection'"
+        case .notAList(let name):
+            return "'\(name)' is not a list; {% for %} requires a list"
         }
     }
 }
@@ -66,9 +82,152 @@ struct TemplateEngine: Sendable {
         resolver: ComponentResolver,
         stack: [String] = []
     ) throws -> String {
-        let withConditionals = try processConditionals(in: text, variables: variables)
+        let withLoops = try processForLoops(in: text, variables: variables, resolver: resolver, stack: stack)
+        let withConditionals = try processConditionals(in: withLoops, variables: variables)
         let withIncludes = try resolveIncludes(in: withConditionals, variables: variables, resolver: resolver, stack: stack)
         return try interpolate(withIncludes, variables: variables)
+    }
+
+    // MARK: Loops
+
+    /// Matches a `{% for %}` tag; group 1 is the loop clause (for example,
+    /// `item in items`).
+    private static let forPattern = "\\{%\\s*for\\b\\s*(.*?)\\s*%\\}"
+
+    /// Matches any structural tag (`if`, `else`, `endif`, `for`, `endfor`);
+    /// group 1 is the tag name, group 2 its clause (for `if` and `for`,
+    /// possibly empty).
+    private static let structuralTagPattern = "\\{%\\s*(if|else|endif|for|endfor)\\b\\s*(.*?)\\s*%\\}"
+
+    /// Parses a `{% for %}` clause into its item variable and collection
+    /// variable.
+    private static let forClausePattern = "^([A-Za-z0-9_]+)\\s+in\\s+([A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*)$"
+
+    /// Evaluates `{% for %}` loops, rendering the loop body once per item of
+    /// the collection, or the `{% else %}` branch when the collection is
+    /// empty. Runs before conditionals and interpolation so a loop body can
+    /// contain either, with the item variable in scope for the whole body.
+    private func processForLoops(
+        in text: String,
+        variables: Variables,
+        resolver: ComponentResolver,
+        stack: [String]
+    ) throws -> String {
+        guard let forMatch = try Self.firstMatch(of: Self.forPattern, in: text) else {
+            try guardAgainstStrayEndfor(in: text)
+            return text
+        }
+        // The text before the first for cannot contain another for; reject a
+        // stray {% endfor %} in it.
+        try guardAgainstStrayEndfor(in: String(text[..<forMatch.range.lowerBound]))
+
+        // Find the matching {% endfor %} (and optional {% else %}), tracking
+        // the open constructs so an {% else %} belonging to a nested {% if %}
+        // is not mistaken for the loop's.
+        var open: [String] = ["for"]
+        var elseRange: Range<String.Index>?
+        var endRange: Range<String.Index>?
+        let tagRegex = try NSRegularExpression(pattern: Self.structuralTagPattern)
+        scan: for match in tagRegex.matches(in: text, range: NSRange(forMatch.range.upperBound..., in: text)) {
+            guard
+                let range = Range(match.range, in: text),
+                let nameRange = Range(match.range(at: 1), in: text)
+            else { continue }
+            let name = String(text[nameRange])
+            switch name {
+            case "for":
+                open.append("for")
+            case "if":
+                open.append("if")
+            case "endfor":
+                guard let top = open.popLast(), top == "for" else {
+                    throw TemplateError.unexpectedLoopTag("endfor")
+                }
+                if open.isEmpty {
+                    endRange = range
+                    break scan
+                }
+            case "endif":
+                guard let top = open.popLast(), top == "if" else {
+                    throw TemplateError.unexpectedConditionalTag("endif")
+                }
+            case "else":
+                // The loop's else only when the loop is the innermost open
+                // construct.
+                if open.count == 1, open[0] == "for" {
+                    elseRange = range
+                }
+            default:
+                break
+            }
+        }
+        guard let endRange else {
+            throw TemplateError.unclosedLoop(Self.conditionText(of: forMatch, in: text))
+        }
+
+        let (itemVariable, collectionVariable) = try Self.parseForClause(Self.conditionText(of: forMatch, in: text))
+        let collection = try Self.collection(of: collectionVariable, in: variables)
+
+        let thenBranch = String(text[forMatch.range.upperBound..<(elseRange?.lowerBound ?? endRange.lowerBound)])
+        let elseBranch = elseRange.map { String(text[$0.upperBound..<endRange.lowerBound]) } ?? ""
+
+        let rendered: String
+        if collection.isEmpty {
+            rendered = try render(elseBranch, variables: variables, resolver: resolver, stack: stack)
+        } else {
+            var items = ""
+            for item in collection {
+                let scoped = variables.merged(with: Variables([itemVariable: item]))
+                items += try render(thenBranch, variables: scoped, resolver: resolver, stack: stack)
+            }
+            rendered = items
+        }
+
+        let suffix = try processForLoops(
+            in: String(text[endRange.upperBound...]),
+            variables: variables,
+            resolver: resolver,
+            stack: stack
+        )
+        return String(text[..<forMatch.range.lowerBound]) + rendered + suffix
+    }
+
+    /// Parses a `{% for %}` clause into its item variable and collection
+    /// variable.
+    private static func parseForClause(_ clause: String) throws -> (item: String, collection: String) {
+        let regex = try NSRegularExpression(pattern: Self.forClausePattern)
+        guard
+            let match = regex.firstMatch(in: clause, range: NSRange(clause.startIndex..., in: clause)),
+            let itemRange = Range(match.range(at: 1), in: clause),
+            let collectionRange = Range(match.range(at: 2), in: clause)
+        else {
+            throw TemplateError.invalidLoop(clause)
+        }
+        return (String(clause[itemRange]), String(clause[collectionRange]))
+    }
+
+    /// Resolves a `{% for %}` collection: a missing variable is an error, as
+    /// is a variable that is not a list.
+    private static func collection(of name: String, in variables: Variables) throws -> [Variable] {
+        guard let variable = variables[name] else {
+            throw TemplateError.missingVariable(name)
+        }
+        guard case .list(let items) = variable else {
+            throw TemplateError.notAList(name)
+        }
+        return items
+    }
+
+    /// Throws when `text` contains a `{% endfor %}` that has no matching
+    /// `{% for %}`.
+    private func guardAgainstStrayEndfor(in text: String) throws {
+        let regex = try NSRegularExpression(pattern: Self.structuralTagPattern)
+        for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let nameRange = Range(match.range(at: 1), in: text) else { continue }
+            if String(text[nameRange]) == "endfor" {
+                throw TemplateError.unexpectedLoopTag("endfor")
+            }
+        }
     }
 
     // MARK: Conditionals

@@ -65,6 +65,10 @@ struct RenderPagesStep: BuildStep {
             templatesURL = url
         }
 
+        // Collect every page's frontmatter up front so each page can see the
+        // site's pages as {{ site.pages }} while it renders.
+        let pagesVariable = try Self.pageCollection(for: pages, site: site)
+
         for pageURL in pages {
             try renderPage(
                 at: pageURL,
@@ -73,7 +77,8 @@ struct RenderPagesStep: BuildStep {
                 engine: engine,
                 resolver: resolver,
                 renderer: renderer,
-                stringTable: stringTable
+                stringTable: stringTable,
+                pagesVariable: pagesVariable
             )
         }
     }
@@ -88,7 +93,8 @@ struct RenderPagesStep: BuildStep {
         engine: TemplateEngine,
         resolver: ComponentResolver,
         renderer: MarkdownRenderer,
-        stringTable: StringTable?
+        stringTable: StringTable?,
+        pagesVariable: Variable
     ) throws {
         let data = try site.fileSystem.read(contentsOf: pageURL)
         let text = String(data: data, encoding: .utf8) ?? ""
@@ -106,7 +112,8 @@ struct RenderPagesStep: BuildStep {
             locale: locale,
             defaultLocale: defaultLocale,
             outputRelative: outputRelative,
-            sourceRelative: relative
+            sourceRelative: relative,
+            pagesVariable: pagesVariable
         )
         .merged(with: page.variables)
 
@@ -161,7 +168,8 @@ struct RenderPagesStep: BuildStep {
                         engine: engine,
                         resolver: resolver,
                         renderer: renderer,
-                        stringTable: stringTable
+                        stringTable: stringTable,
+                        pagesVariable: pagesVariable
                     )
                 } else {
                     site.warn(
@@ -178,13 +186,18 @@ struct RenderPagesStep: BuildStep {
         locale: String,
         defaultLocale: String,
         outputRelative: String,
-        sourceRelative: String
+        sourceRelative: String,
+        pagesVariable: Variable
     ) -> Variables {
         var pageValues: [String: Variable] = ["url": .string("/" + outputRelative)]
         if let date = page.date {
             pageValues["date"] = .string(date)
         }
+        if let baseUrl = site.baseUrl {
+            pageValues["canonical"] = .string(PageURL.absolute(for: outputRelative, baseUrl: baseUrl))
+        }
         var siteValues: [String: Variable] = ["name": .string(site.name)]
+        siteValues["pages"] = pagesVariable
         for (key, value) in site.templateVariables {
             siteValues[key] = value
         }
@@ -332,14 +345,13 @@ struct RenderPagesStep: BuildStep {
         var links: [String] = []
         var defaultURL: String?
         for alternate in localization.locales {
-            let (sourceFiles, url): ([String], String)
+            let sourceFiles: [String]
             if alternate == defaultLocale {
                 sourceFiles = [base + ".md", base + ".html"]
-                url = "/" + base + ".html"
             } else {
                 sourceFiles = [base + "." + alternate + ".md", base + "." + alternate + ".html"]
-                url = "/" + alternate + "/" + base + ".html"
             }
+            let url = PageURL.relative(forBase: base, in: alternate, defaultLocale: defaultLocale)
             let hasExplicitFile = sourceFiles.contains(where: {
                 site.fileSystem.fileExists(
                     atPath: site.sourceDirectory.appendingPathComponent($0).path
@@ -395,5 +407,49 @@ struct RenderPagesStep: BuildStep {
         try fileSystem.files(in: directory).filter {
             Glob.matches(glob, path: fileSystem.relativePath(of: $0, to: directory))
         }
+    }
+
+    // MARK: Page collection
+
+    /// Builds the `site.pages` variable: a list with one entry per page, each
+    /// a map of the page's `title`, `url`, `locale`, and (when declared)
+    /// `date`.
+    private static func pageCollection(for pages: [URL], site: Site) throws -> Variable {
+        let fileSystem = site.fileSystem
+        let defaultLocale = site.localization?.defaultLocale ?? "default"
+        var entries: [Variable] = []
+        for pageURL in pages {
+            let data = try fileSystem.read(contentsOf: pageURL)
+            let text = String(data: data, encoding: .utf8) ?? ""
+            let isHTMLPage = pageURL.path.hasSuffix(".html")
+            let page = isHTMLPage ? try Frontmatter.parseHTML(text) : try Frontmatter.parse(text)
+            let relative = fileSystem.relativePath(of: pageURL, to: site.sourceDirectory)
+            let locale = Self.locale(of: relative, in: site.localization)
+            let outputRelative = Self.outputPath(for: relative, locale: locale, defaultLocale: defaultLocale)
+            var entry: [String: Variable] = [
+                "title": .string(
+                    page.variables["title"]?.stringValue
+                        ?? Self.fallbackTitle(for: relative, locale: locale, defaultLocale: defaultLocale)
+                ),
+                "url": .string("/" + outputRelative),
+                "locale": .string(locale),
+            ]
+            if let date = page.date {
+                entry["date"] = .string(date)
+            }
+            entries.append(.map(entry))
+        }
+        return .list(entries)
+    }
+
+    /// A page's title when its frontmatter declares none: the file name
+    /// without its extension and locale suffix.
+    private static func fallbackTitle(for relative: String, locale: String, defaultLocale: String) -> String {
+        var name = relative.split(separator: "/").last.map(String.init) ?? relative
+        name = Self.baseName(of: name)
+        if locale != defaultLocale, name.hasSuffix("." + locale) {
+            name = String(name.dropLast(locale.count + 1))
+        }
+        return name
     }
 }

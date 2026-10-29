@@ -65,6 +65,13 @@ public final class Site: @unchecked Sendable {
     /// named `name` overrides `site.name`.
     public let templateVariables: [String: Variable]
 
+    /// The site's public base URL, for example `"https://example.com"`.
+    ///
+    /// When set, pages get a `page.canonical` built-in variable (the page's
+    /// absolute URL, ready to paste into a `<link rel="canonical">` tag), and
+    /// `generateSitemap()` can be called without a base URL.
+    public let baseUrl: String?
+
     /// The site's localization configuration, if any.
     private(set) var localization: Localization?
 
@@ -92,6 +99,10 @@ public final class Site: @unchecked Sendable {
     ///     components under the `site` namespace, for example
     ///     `["year": .string("2026")]` renders as `{{ site.year }}`.
     ///     Defaults to an empty dictionary.
+    ///   - baseUrl: The site's public base URL, for example
+    ///     `"https://example.com"`. When set, pages get a `page.canonical`
+    ///     built-in variable and `generateSitemap()` can be called without a
+    ///     base URL. Defaults to `nil`.
     public init(
         name: String,
         source: String = "content",
@@ -99,7 +110,8 @@ public final class Site: @unchecked Sendable {
         root: URL? = nil,
         fileSystem: any FileSystem = LocalFileSystem(),
         commandRunner: any CommandRunner = ProcessCommandRunner(),
-        templateVariables: [String: Variable] = [:]
+        templateVariables: [String: Variable] = [:],
+        baseUrl: String? = nil
     ) {
         self.name = name
         self.source = source
@@ -108,6 +120,7 @@ public final class Site: @unchecked Sendable {
         self.fileSystem = fileSystem
         self.commandRunner = commandRunner
         self.templateVariables = templateVariables
+        self.baseUrl = baseUrl
     }
 
     /// The resolved source directory (for example, `/path/to/project/content`).
@@ -293,7 +306,7 @@ public final class Site: @unchecked Sendable {
     /// output directory.
     ///
     /// The sitemap lists every `.html` file in the output directory under
-    /// `baseUrl`, so the step runs after the steps that produce pages:
+    /// the base URL, so the step runs after the steps that produce pages:
     ///
     /// ```swift
     /// site.renderPages()
@@ -304,11 +317,41 @@ public final class Site: @unchecked Sendable {
     /// `index.html` becomes `https://example.com/`, and `fr-fr/index.html`
     /// becomes `https://example.com/fr-fr/`.
     ///
+    /// Each entry carries a `<lastmod>` — the page's frontmatter `date` when
+    /// declared, otherwise the page's source file modification time — and,
+    /// when the site is localized, `<xhtml:link rel="alternate"
+    /// hreflang="…">` entries for every locale the page is published in,
+    /// mirroring the page's `page.alternates`.
+    ///
     /// - Parameter baseUrl: The site's public base URL, for example
-    ///   `"https://example.com"`.
+    ///   `"https://example.com"`. Defaults to the site's `baseUrl` when the
+    ///   site was created with one; the build fails if neither is set.
     @discardableResult
-    public func generateSitemap(baseUrl: String) -> Site {
+    public func generateSitemap(baseUrl: String? = nil) -> Site {
         addStep(SitemapStep(baseUrl: baseUrl))
+    }
+
+    /// Adds a step that checks the internal links in the site's output.
+    ///
+    /// Every `href` in the output files matching `glob` is resolved the way
+    /// the site's server resolves requests, and the build reports a warning
+    /// for each link that does not resolve to a built file:
+    ///
+    /// ```swift
+    /// site.renderPages()
+    ///     .checkLinks()
+    /// ```
+    ///
+    /// Links with a scheme (`https://`, `mailto:`, …), fragment-only links
+    /// (`#section`), and anchors on the current page are skipped. A link to
+    /// a directory resolves to that directory's `index.html`, so `/blog/`
+    /// checks out when `blog/index.html` is built.
+    ///
+    /// - Parameter glob: The output files to check, relative to the output
+    ///   directory. Defaults to `"**/*.html"`.
+    @discardableResult
+    public func checkLinks(glob: String = "**/*.html") -> Site {
+        addStep(CheckLinksStep(glob: glob))
     }
 
     /// Adds a step that opens a built page in the default browser.

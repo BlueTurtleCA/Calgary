@@ -128,6 +128,84 @@ struct RenderPagesStepTests {
         #expect(output?.contains("/dated.html / 2026-01-01") == true)
     }
 
+    @Test("Exposes page.canonical when the site has a base URL")
+    func exposesCanonicalWhenSiteHasBaseUrl() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            """
+            <!doctype html>
+            <html>
+            <head><title>{{ title }}</title><link rel="canonical" href="{{ page.canonical }}"></head>
+            <body>{{ content }}</body>
+            </html>
+            """,
+            at: "templates/home.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            """
+            ---
+            template: home
+            variables:
+              title: A Post
+            ---
+
+            A post.
+            """,
+            at: "content/blog/post.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = Site(
+            name: "Test Site",
+            root: virtualRoot,
+            fileSystem: fileSystem,
+            baseUrl: "https://example.com"
+        )
+        .registerTemplates(in: "templates")
+        .registerComponents(in: "components")
+        .renderPages()
+
+        try site.build()
+
+        let index = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(index?.contains("<link rel=\"canonical\" href=\"https://example.com/\">") == true)
+
+        let post = try readFile(at: "build/blog/post.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(post?.contains("<link rel=\"canonical\" href=\"https://example.com/blog/post.html\">") == true)
+    }
+
+    @Test("Does not expose page.canonical when the site has no base URL")
+    func noCanonicalWithoutBaseUrl() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            """
+            <!doctype html>
+            <html>
+            <head>{% if page.canonical %}CANONICAL{% endif %}</head>
+            <body>{{ content }}</body>
+            </html>
+            """,
+            at: "templates/home.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        let output = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("CANONICAL") == false)
+    }
+
     @Test("Exposes site template variables under the site namespace")
     func exposesSiteTemplateVariables() throws {
         let fileSystem = InMemoryFileSystem()
@@ -877,5 +955,139 @@ struct RenderPagesStepTests {
         )) {
             try site.build()
         }
+    }
+
+    // MARK: Page collection
+
+    @Test("Exposes the site's pages as site.pages")
+    func exposesSitePages() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            """
+            ---
+            template: home
+            variables:
+              title: About
+            ---
+
+            {% for page in site.pages %}<a href="{{ page.url }}">{{ page.title }}</a>{% endfor %}
+            """,
+            at: "content/about.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        let output = try readFile(at: "build/about.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("<a href=\"/index.html\">Hello</a>") == true)
+        #expect(output?.contains("<a href=\"/about.html\">About</a>") == true)
+    }
+
+    @Test("site.pages includes a page's date when declared")
+    func sitePagesIncludeDate() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            """
+            ---
+            template: home
+            date: 2026-02-01
+            variables:
+              title: Dated
+            ---
+
+            {% for page in site.pages %}{% if page.date %}{{ page.date }}{% endif %}{% endfor %}
+            """,
+            at: "content/dated.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        let output = try readFile(at: "build/dated.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("2026-02-01") == true)
+    }
+
+    @Test("site.pages falls back to the file name when a page has no title")
+    func sitePagesFallBackToFileName() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        // An HTML page has no frontmatter, so its site.pages entry falls back
+        // to the file name.
+        try writeFile(
+            "<html><body>untitled page</body></html>",
+            at: "content/untitled.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            """
+            ---
+            template: home
+            variables:
+              title: List
+            ---
+
+            {% for page in site.pages %}{{ page.title }}{% endfor %}
+            """,
+            at: "content/list.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        let output = try readFile(at: "build/list.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("untitled") == true)
+    }
+
+    @Test("site.pages exposes each page's locale")
+    func sitePagesExposeLocale() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            """
+            ---
+            template: home
+            variables:
+              title: Bonjour
+            ---
+
+            {% for page in site.pages %}{{ page.locale }}{% endfor %}
+            """,
+            at: "content/index.fr-fr.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .localize(defaultLocale: "en", locales: ["fr-fr"])
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        let french = try readFile(at: "build/fr-fr/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(french?.contains("en") == true)
+        #expect(french?.contains("fr-fr") == true)
     }
 }

@@ -20,7 +20,17 @@ final class InMemoryFileSystem: @unchecked Sendable, FileSystem {
     /// The paths of every directory.
     private var directories: Set<String> = ["/"]
 
+    /// The recorded modification date of every file, keyed by normalized
+    /// path.
+    private var modificationDates: [String: Date] = [:]
+
     init() {}
+
+    /// Records a modification date for a file, so tests can control the date
+    /// the sitemap's `<lastmod>` falls back to.
+    func setModificationDate(_ date: Date, of url: URL) {
+        modificationDates[normalized(url.path)] = date
+    }
 
     // MARK: - FileSystem
 
@@ -62,11 +72,15 @@ final class InMemoryFileSystem: @unchecked Sendable, FileSystem {
 
         files[path] = nil
         directories.remove(path)
+        modificationDates[path] = nil
 
         // Remove everything below the path, if it was a directory.
         let prefix = path + "/"
         for key in files.keys where key.hasPrefix(prefix) {
             files[key] = nil
+        }
+        for key in modificationDates.keys where key.hasPrefix(prefix) {
+            modificationDates[key] = nil
         }
         for key in directories where key.hasPrefix(prefix) {
             directories.remove(key)
@@ -105,11 +119,14 @@ final class InMemoryFileSystem: @unchecked Sendable, FileSystem {
 
         if let contents = files[sourcePath] {
             files[destinationPath] = contents
+            modificationDates[destinationPath] = modificationDates[sourcePath]
         } else {
             directories.insert(destinationPath)
             let prefix = sourcePath + "/"
             for (key, contents) in files where key.hasPrefix(prefix) {
-                files[destinationPath + String(key.dropFirst(prefix.count))] = contents
+                let destinationKey = destinationPath + String(key.dropFirst(prefix.count))
+                files[destinationKey] = contents
+                modificationDates[destinationKey] = modificationDates[key]
             }
             for key in directories where key.hasPrefix(prefix) {
                 directories.insert(destinationPath + String(key.dropFirst(prefix.count)))
@@ -137,6 +154,10 @@ final class InMemoryFileSystem: @unchecked Sendable, FileSystem {
             throw InMemoryFileSystemError.noSuchFile(path)
         }
         return contents
+    }
+
+    func modificationDate(of url: URL) -> Date? {
+        modificationDates[normalized(url.path)]
     }
 
     // MARK: - Path helpers

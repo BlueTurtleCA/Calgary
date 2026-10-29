@@ -26,7 +26,8 @@ struct Main {
             name: "Blue Turtle Canada",
             source: "content",
             output: "build",
-            root: root
+            root: root,
+            baseUrl: "https://example.com"
         )
         .localize(defaultLocale: "en", locales: ["fr-fr"], strings: "strings")
         .copyAssets(from: "assets")
@@ -44,7 +45,9 @@ struct Main {
         .registerComponents(in: "components")
         .renderPages()
         .minify()
-        .generateSitemap(baseUrl: "https://example.com")
+        // The base URL comes from the Site, so the step needs no argument.
+        .generateSitemap()
+        .checkLinks()
 
         // The sample opens the built file by default, so the build always
         // finishes. Pass --serve to serve the site over HTTP instead, which

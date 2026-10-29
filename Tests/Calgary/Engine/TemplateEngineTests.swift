@@ -663,4 +663,218 @@ struct TemplateEngineTests {
             )
         }
     }
+
+    // MARK: Loops
+
+    @Test("Renders a loop over a list")
+    func rendersLoopOverList() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{% for item in items %}<li>{{ item }}</li>{% endfor %}",
+            variables: Variables(["items": .list([.string("a"), .string("b"), .string("c")])]),
+            resolver: resolver
+        )
+
+        #expect(result == "<li>a</li><li>b</li><li>c</li>")
+    }
+
+    @Test("Renders the else branch when the list is empty")
+    func rendersElseBranchWhenListIsEmpty() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{% for item in items %}<li>{{ item }}</li>{% else %}<p>none</p>{% endfor %}",
+            variables: Variables(["items": .list([])]),
+            resolver: resolver
+        )
+
+        #expect(result == "<p>none</p>")
+    }
+
+    @Test("Renders nothing when the list is empty and there is no else")
+    func rendersNothingWhenListIsEmptyWithoutElse() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{% for item in items %}<li>{{ item }}</li>{% endfor %}",
+            variables: Variables(["items": .list([])]),
+            resolver: resolver
+        )
+
+        #expect(result == "")
+    }
+
+    @Test("Iterates over a list of maps with dot notation")
+    func iteratesOverListOfMaps() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{% for page in pages %}<a href=\"{{ page.url }}\">{{ page.title }}</a>{% endfor %}",
+            variables: Variables([
+                "pages": .list([
+                    .map(["title": .string("Home"), "url": .string("/index.html")]),
+                    .map(["title": .string("About"), "url": .string("/about.html")]),
+                ]),
+            ]),
+            resolver: resolver
+        )
+
+        #expect(result == "<a href=\"/index.html\">Home</a><a href=\"/about.html\">About</a>")
+    }
+
+    @Test("Iterates over a dot-notation collection")
+    func iteratesOverDotNotationCollection() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{% for item in site.items %}{{ item }}{% endfor %}",
+            variables: Variables(["site": .map(["items": .list([.string("a"), .string("b")])])]),
+            resolver: resolver
+        )
+
+        #expect(result == "ab")
+    }
+
+    @Test("Supports conditionals inside a loop")
+    func supportsConditionalsInsideLoop() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{% for item in items %}{% if item == \"b\" %}<b>{{ item }}</b>{% else %}{{ item }}{% endif %}{% endfor %}",
+            variables: Variables(["items": .list([.string("a"), .string("b"), .string("c")])]),
+            resolver: resolver
+        )
+
+        #expect(result == "a<b>b</b>c")
+    }
+
+    @Test("Supports includes inside a loop")
+    func supportsIncludesInsideLoop() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(
+            fileSystem: fileSystem,
+            components: ["components/card.html": "<card>{{ title }}</card>"]
+        )
+
+        let result = try engine.render(
+            "{% for item in items %}{% include \"components/card\" title={{ item }} %}{% endfor %}",
+            variables: Variables(["items": .list([.string("a"), .string("b")])]),
+            resolver: resolver
+        )
+
+        #expect(result == "<card>a</card><card>b</card>")
+    }
+
+    @Test("Supports nested loops")
+    func supportsNestedLoops() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{% for row in rows %}{% for col in row %}{{ col }}{% endfor %}|{% endfor %}",
+            variables: Variables([
+                "rows": .list([
+                    .list([.string("a"), .string("b")]),
+                    .list([.string("c")]),
+                ]),
+            ]),
+            resolver: resolver
+        )
+
+        #expect(result == "ab|c|")
+    }
+
+    @Test("A loop can be wrapped by a conditional")
+    func loopWrappedByConditional() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+        let template = "{% if show %}{% for item in items %}{{ item }}{% endfor %}{% endif %}"
+
+        let shown = try engine.render(
+            template,
+            variables: Variables(["show": .boolean(true), "items": .list([.string("a"), .string("b")])]),
+            resolver: resolver
+        )
+        let hidden = try engine.render(
+            template,
+            variables: Variables(["show": .boolean(false), "items": .list([.string("a"), .string("b")])]),
+            resolver: resolver
+        )
+
+        #expect(shown == "ab")
+        #expect(hidden == "")
+    }
+
+    @Test("Throws when the loop collection is missing")
+    func throwsWhenLoopCollectionIsMissing() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        #expect(throws: TemplateError.missingVariable("items")) {
+            try engine.render(
+                "{% for item in items %}{{ item }}{% endfor %}",
+                variables: Variables(),
+                resolver: resolver
+            )
+        }
+    }
+
+    @Test("Throws when the loop collection is not a list")
+    func throwsWhenLoopCollectionIsNotAList() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        #expect(throws: TemplateError.notAList("title")) {
+            try engine.render(
+                "{% for item in title %}{{ item }}{% endfor %}",
+                variables: Variables(["title": .string("x")]),
+                resolver: resolver
+            )
+        }
+    }
+
+    @Test("Throws when a for has no endfor")
+    func throwsWhenForHasNoEndfor() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        #expect(throws: TemplateError.self) {
+            try engine.render(
+                "{% for item in items %}{{ item }}",
+                variables: Variables(["items": .list([.string("a")])]),
+                resolver: resolver
+            )
+        }
+    }
+
+    @Test("Throws on a stray endfor")
+    func throwsOnStrayEndfor() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        #expect(throws: TemplateError.unexpectedLoopTag("endfor")) {
+            try engine.render("{% endfor %}", variables: Variables(), resolver: resolver)
+        }
+    }
+
+    @Test("Throws on an invalid for clause")
+    func throwsOnInvalidForClause() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        #expect(throws: TemplateError.self) {
+            try engine.render(
+                "{% for items %}{{ item }}{% endfor %}",
+                variables: Variables(["items": .list([.string("a")])]),
+                resolver: resolver
+            )
+        }
+    }
 }

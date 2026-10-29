@@ -75,6 +75,7 @@ struct Main {
             .registerTemplates(in: "templates")
             .registerComponents(in: "components")
             .renderPages()
+            .checkLinks()
             .open("index.html")
 
         do {
@@ -140,6 +141,7 @@ Markdown (`.md`) or raw HTML (`.html`) partials. They may use variables and incl
 - `{% include "path" key="value" %}` — include with variables; the arguments are visible inside the component (and its nested includes) and shadow same-named outer variables
 - `{% include "path" key={{ variable }} %}` — include with a variable argument; the value is resolved from the current context and keeps its type
 - `{% if condition %} … {% else %} … {% endif %}` — conditional; `else` is optional and nesting is supported
+- `{% for item in items %} … {% else %} … {% endfor %}` — loop over a list; the item is available as `{{ item }}` (dot notation for map items), and the optional `else` branch renders when the list is empty
 
 A condition is a bare variable (a truthiness check; a missing variable is false) or a `==`/`!=` comparison of quoted strings, numbers, or variables:
 
@@ -151,9 +153,17 @@ A condition is a bare variable (a truthiness check; a missing variable is false)
 {% endif %}
 ```
 
-In a comparison, a missing variable fails the build, as do an unclosed `{% if %}` and a stray `{% else %}` or `{% endif %}`.
+In a comparison, a missing variable fails the build, as do an unclosed `{% if %}` and a stray `{% else %}` or `{% endif %}`. A `{% for %}` collection must be a list (a missing or non-list variable fails the build), as do an unclosed `{% for %}` and a stray `{% endfor %}`.
 
-- Built-in variables: `site.name`, `page.url`, `page.date` (when declared); when the site is localized, also `page.locale`, `site.defaultLocale`, and `page.alternates`. Frontmatter variables override built-ins.
+- Built-in variables: `site.name`, `site.pages`, `page.url`, `page.date` (when declared); when the site is created with a `baseUrl`, also `page.canonical` (the page's absolute URL, for `<link rel="canonical">`); when the site is localized, also `page.locale`, `site.defaultLocale`, and `page.alternates`. Frontmatter variables override built-ins.
+- `site.pages` is a list of the site's pages, each with `title`, `url`, `locale`, and (when declared) `date`; a page's `title` falls back to its file name. Use it with `{% for %}` to build listing pages and navigation:
+
+```html
+{% for page in site.pages %}
+  <a href="{{ page.url }}">{{ page.title }}</a>
+{% endfor %}
+```
+
 - Site-wide variables: pass `templateVariables:` to `Site(...)` — for example, `templateVariables: ["year": .string("2026")]` renders as `{{ site.year }}` on every page. Values are `Variable`s (strings, numbers, booleans, lists, nested maps), so computed or fetched values (a year, a scraped headline) can flow straight into templates; they override same-named built-ins.
 
 ### Localization (optional)
@@ -184,7 +194,7 @@ swift run MySite
 - `build/` is wiped and recreated on every build; steps run in the order they were added.
 - The `open` step opens `build/index.html` in a browser on Apple platforms; otherwise inspect the generated HTML directly.
 - A failed build throws a `BuildError` whose message names the failing step.
-- Warnings (for example, a markdown page with no translation) are printed when the build finishes; they do not fail the build.
+- Warnings (for example, a markdown page with no translation, or an internal link that does not resolve to a built page) are printed when the build finishes; they do not fail the build.
 
 ## Pipeline steps
 
@@ -197,7 +207,8 @@ swift run MySite
 | `localize(defaultLocale:locales:strings:)` | Configures locales and the strings source (YAML directory or `.xcstrings` catalog); translations render under `/<locale>/` |
 | `renderPages(glob:)` | Renders every page matching the glob (default `**/*.{md,html}`) into its template |
 | `minify(glob:)` | Minifies output files matching the glob (default `**/*.{html,css}`): strips HTML and CSS comments and collapses whitespace; raw HTML elements (`<script>`, `<style>`, `<textarea>`, `<pre>`, `<code>`) and CSS strings are untouched |
-| `generateSitemap(baseUrl:)` | Writes `sitemap.xml` listing every `.html` file in the output under `baseUrl`; run after `renderPages` |
+| `generateSitemap(baseUrl:)` | Writes `sitemap.xml` listing every `.html` file in the output under `baseUrl` (defaulting to the site's `baseUrl`), with a `<lastmod>` per page (frontmatter `date`, falling back to file modification time) and, for localized sites, `hreflang` alternates; run after `renderPages` |
+| `checkLinks(glob:)` | Checks the internal `href`s in output files matching the glob (default `**/*.html`): each link is resolved the way the site's server resolves requests, and a warning is reported for each link that does not resolve to a built file; links with a scheme (`https://`, `mailto:`, …), fragment-only links, and anchors on the current page are skipped, and a link to a directory resolves to its `index.html` |
 | `open(_:)` | Opens a built page in the default browser (Apple platforms) |
 | `addStep(_:)` | Adds a custom step |
 
