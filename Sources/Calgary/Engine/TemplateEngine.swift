@@ -8,6 +8,8 @@ enum TemplateError: Error, Equatable, CustomStringConvertible {
     case componentNotFound(String)
     /// An include chain refers to a component that is already being rendered.
     case cyclicInclude([String])
+    /// A `strings.…` value refers to itself, directly or indirectly.
+    case cyclicString([String])
     /// A page's template could not be found in the templates directory.
     case templateNotFound(String)
     /// An `{% if %}` has no matching `{% endif %}`.
@@ -33,6 +35,8 @@ enum TemplateError: Error, Equatable, CustomStringConvertible {
             return "Component not found: \(path)"
         case .cyclicInclude(let chain):
             return "Cyclic include detected: \(chain.joined(separator: " → "))"
+        case .cyclicString(let chain):
+            return "String cycle detected: \(chain.joined(separator: " → "))"
         case .templateNotFound(let name):
             return "Template not found: \(name)"
         case .unclosedConditional(let condition):
@@ -453,7 +457,12 @@ struct TemplateEngine: Sendable {
 
     private static let variablePattern = "\\{\\{\\s*([A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*)\\s*\\}\\}"
 
-    private func interpolate(_ text: String, variables: Variables) throws -> String {
+    /// Interpolates `{{ variable }}` tags in `text` against `variables`.
+    ///
+    /// - Parameter expanding: The `strings.…` values currently being expanded,
+    ///   used to detect a string that refers to itself. Leave empty when
+    ///   starting an interpolation.
+    private func interpolate(_ text: String, variables: Variables, expanding: [String] = []) throws -> String {
         var result = ""
         var searchStart = text.startIndex
         let regex = try NSRegularExpression(pattern: Self.variablePattern)
@@ -467,11 +476,35 @@ struct TemplateEngine: Sendable {
             guard let variable = variables[name] else {
                 throw TemplateError.missingVariable(name)
             }
-            result += variable.stringValue
+            result += try expandedValue(of: variable, name: name, variables: variables, expanding: expanding)
             searchStart = matchRange.upperBound
         }
         result += text[searchStart...]
         return result
+    }
+
+    /// The string value of a `strings.…` variable may contain `{{ … }}`
+    /// placeholders; expand them against the current variables (so a string
+    /// can name `site.year`, a frontmatter variable, or another string).
+    /// Every other value passes through untouched, so content outside the
+    /// `strings` namespace keeps any literal `{{ … }}` it carries.
+    private func expandedValue(
+        of variable: Variable,
+        name: String,
+        variables: Variables,
+        expanding: [String]
+    ) throws -> String {
+        guard
+            case .string(let value) = variable,
+            name.hasPrefix("strings."),
+            value.contains("{{")
+        else {
+            return variable.stringValue
+        }
+        guard !expanding.contains(name) else {
+            throw TemplateError.cyclicString(expanding + [name])
+        }
+        return try interpolate(value, variables: variables, expanding: expanding + [name])
     }
 
     // MARK: Regex helpers

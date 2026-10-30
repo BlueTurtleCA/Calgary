@@ -416,6 +416,134 @@ struct TemplateEngineTests {
         }
     }
 
+    // MARK: String placeholders
+
+    @Test("Expands placeholders in a strings value")
+    func expandsPlaceholdersInStringsValue() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{{ strings.footer.copyright }}",
+            variables: Variables([
+                "site": .map(["year": .integer(2026)]),
+                "strings": .map([
+                    "footer": .map([
+                        "copyright": .string("Copyright {{ site.year }} My Company. All rights reserved."),
+                    ]),
+                ]),
+            ]),
+            resolver: resolver
+        )
+
+        #expect(result == "Copyright 2026 My Company. All rights reserved.")
+    }
+
+    @Test("Leaves a strings value without placeholders unchanged")
+    func leavesStringsValueWithoutPlaceholdersUnchanged() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{{ strings.nav.home }}",
+            variables: Variables([
+                "strings": .map(["nav": .map(["home": .string("Home")])]),
+            ]),
+            resolver: resolver
+        )
+
+        #expect(result == "Home")
+    }
+
+    @Test("Leaves a non-strings value containing placeholders untouched")
+    func leavesNonStringsValueContainingPlaceholdersUntouched() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{{ note }}",
+            variables: Variables(["note": .string("Use {{ title }} here")]),
+            resolver: resolver
+        )
+
+        #expect(result == "Use {{ title }} here")
+    }
+
+    @Test("Expands a string that references another string")
+    func expandsStringReferencingAnotherString() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{{ strings.footer.copyright }}",
+            variables: Variables([
+                "site": .map(["year": .integer(2026)]),
+                "strings": .map([
+                    "company": .map(["name": .string("My Company")]),
+                    "footer": .map([
+                        "copyright": .string("Copyright {{ site.year }} {{ strings.company.name }}."),
+                    ]),
+                ]),
+            ]),
+            resolver: resolver
+        )
+
+        #expect(result == "Copyright 2026 My Company.")
+    }
+
+    @Test("Throws when a string placeholder references a missing variable")
+    func throwsWhenStringPlaceholderReferencesMissingVariable() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        #expect(throws: TemplateError.missingVariable("site.year")) {
+            try engine.render(
+                "{{ strings.footer.copyright }}",
+                variables: Variables([
+                    "strings": .map([
+                        "footer": .map(["copyright": .string("Copyright {{ site.year }}.")]),
+                    ]),
+                ]),
+                resolver: resolver
+            )
+        }
+    }
+
+    @Test("Detects a string that refers to itself")
+    func detectsSelfReferencingString() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        #expect(throws: TemplateError.cyclicString(["strings.a", "strings.a"])) {
+            try engine.render(
+                "{{ strings.a }}",
+                variables: Variables([
+                    "strings": .map(["a": .string("{{ strings.a }}")]),
+                ]),
+                resolver: resolver
+            )
+        }
+    }
+
+    @Test("Detects strings that refer to each other")
+    func detectsMutuallyReferencingStrings() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        #expect(throws: TemplateError.self) {
+            try engine.render(
+                "{{ strings.a }}",
+                variables: Variables([
+                    "strings": .map([
+                        "a": .string("{{ strings.b }}"),
+                        "b": .string("{{ strings.a }}"),
+                    ]),
+                ]),
+                resolver: resolver
+            )
+        }
+    }
+
     // MARK: Conditionals
 
     @Test("Renders the then branch when a variable is truthy")

@@ -105,7 +105,7 @@ Hi, welcome to {{ title }}!
 
 ### Localization
 
-Declared in the pipeline with `Site.localize(defaultLocale:locales:strings:)`. A page whose file name ends in `.<locale>.md` for a declared non-default locale is a translation, written under a `/<locale>/` subfolder in the output (the default locale stays at the root). Strings come from per-locale YAML files or an Xcode `.xcstrings` catalog (pointed at by `strings:`), exposed to templates and components as `{{ strings.… }}`, falling back to the default locale.
+Declared in the pipeline with `Site.localize(defaultLocale:locales:strings:)`. A page whose file name ends in `.<locale>.md` for a declared non-default locale is a translation, written under a `/<locale>/` subfolder in the output (the default locale stays at the root). Strings come from per-locale YAML files or an Xcode `.xcstrings` catalog (pointed at by `strings:`), exposed to templates and components as `{{ strings.… }}`, falling back to the default locale. A string value may contain `{{ … }}` placeholders, resolved against the page's variables (including other strings) when the string is used.
 
 HTML pages are locale-neutral: a default-locale `page.html` is also rendered for every other declared locale (its strings and variables pick up each locale) and written under each `/<locale>/` subfolder, unless an explicit `page.<locale>.html` or `page.<locale>.md` translation exists, in which case that file takes precedence. A default-locale markdown page without a translation renders only for the default locale, and the build reports a warning for each missing locale.
 
@@ -137,6 +137,7 @@ Markdown (`.md`) or raw HTML (`.html`) partials. They may use variables and incl
 - `{% include "path" key={{ variable }} %}` — include with a variable argument; the value is resolved from the current context and keeps its type
 - `{% if condition %} … {% else %} … {% endif %}` — basic conditional: a bare variable (truthiness; a missing variable is false) or a `==`/`!=` comparison of quoted strings, numbers, or variables; `else` is optional, nesting is supported, and a missing variable in a comparison fails the build
 - `{% for item in items %} … {% else %} … {% endfor %}` — loop over a list; the item is available as `{{ item }}` (dot notation for map items), the optional `else` branch renders when the list is empty, and a missing or non-list collection fails the build
+- `strings.…` values may contain `{{ … }}` placeholders, resolved against the page's variables when the string is used; a placeholder that names a missing variable fails the build, as does a string that refers to itself, directly or indirectly. Only the `strings` namespace is expanded; other variable values pass through literally
 
 Single-brace shorthand (`{title}`, `{components/hero}`) was considered but rejected: single braces collide with markdown, JSON, and CSS in real content. If the exact shorthand is ever wanted, it is a one-regex change in `TemplateEngine`.
 
@@ -199,7 +200,7 @@ struct Main {
 ## Per-page render flow
 
 1. Read the page, split frontmatter (Yams) → `template`, `date`, variables.
-2. Merge variables: built-ins (`site.name`, `site.pages`, `page.url`, `page.date` when declared; `page.canonical` when the site declares a `baseUrl`; `page.locale`, `site.defaultLocale`, `page.alternates` when localized) + the site's `templateVariables` under `site` (overriding built-ins) + frontmatter (frontmatter wins) + the page's locale strings under `strings` (when localized). `site.pages` is a list of every page's `title`, `url`, `locale`, and (when declared) `date`, built once before any page renders.
+2. Merge variables: built-ins (`site.name`, `site.year` (the current year), `site.pages`, `page.url`, `page.date` when declared; `page.canonical` when the site declares a `baseUrl`; `page.locale`, `site.defaultLocale`, `page.alternates` when localized) + the site's `templateVariables` under `site` (overriding built-ins) + frontmatter (frontmatter wins) + the page's locale strings under `strings` (when localized). `site.pages` is a list of every page's `title`, `url`, `locale`, and (when declared) `date`, built once before any page renders.
 3. Evaluate `{% for %}` loops and `{% if %}` conditionals, then resolve `{% include %}`s recursively. Markdown components render to HTML first, then pass through the template engine (so components can nest and use variables). Cycle detection via a resolution stack.
 4. Render remaining markdown → HTML via swift-markdown, with smart punctuation disabled so quotes and template tags pass through literally.
 5. Inject as `{{ content }}` into the template, interpolate, write output. Path mirrors source: `blog/post.md` → `build/blog/post.html`.

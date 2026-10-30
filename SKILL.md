@@ -142,6 +142,7 @@ Markdown (`.md`) or raw HTML (`.html`) partials. They may use variables and incl
 - `{% include "path" key={{ variable }} %}` — include with a variable argument; the value is resolved from the current context and keeps its type
 - `{% if condition %} … {% else %} … {% endif %}` — conditional; `else` is optional and nesting is supported
 - `{% for item in items %} … {% else %} … {% endfor %}` — loop over a list; the item is available as `{{ item }}` (dot notation for map items), and the optional `else` branch renders when the list is empty
+- `strings.…` values may contain `{{ … }}` placeholders, resolved against the page's variables (including other strings) when the string is used; a placeholder that names a missing variable fails the build, as does a string that refers to itself, directly or indirectly. Only the `strings` namespace is expanded; other variable values pass through literally
 
 A condition is a bare variable (a truthiness check; a missing variable is false) or a `==`/`!=` comparison of quoted strings, numbers, or variables:
 
@@ -155,7 +156,7 @@ A condition is a bare variable (a truthiness check; a missing variable is false)
 
 In a comparison, a missing variable fails the build, as do an unclosed `{% if %}` and a stray `{% else %}` or `{% endif %}`. A `{% for %}` collection must be a list (a missing or non-list variable fails the build), as do an unclosed `{% for %}` and a stray `{% endfor %}`.
 
-- Built-in variables: `site.name`, `site.pages`, `page.url`, `page.date` (when declared); when the site is created with a `baseUrl`, also `page.canonical` (the page's absolute URL, for `<link rel="canonical">`); when the site is localized, also `page.locale`, `site.defaultLocale`, and `page.alternates`. Frontmatter variables override built-ins.
+- Built-in variables: `site.name`, `site.year` (the current year, computed at build time), `site.pages`, `page.url`, `page.date` (when declared); when the site is created with a `baseUrl`, also `page.canonical` (the page's absolute URL, for `<link rel="canonical">`); when the site is localized, also `page.locale`, `site.defaultLocale`, and `page.alternates`. Frontmatter variables override built-ins.
 - `site.pages` is a list of the site's pages, each with `title`, `url`, `locale`, and (when declared) `date`; a page's `title` falls back to its file name. Use it with `{% for %}` to build listing pages and navigation:
 
 ```html
@@ -182,7 +183,7 @@ let site = Site(name: "My Site", source: "content", output: "build")
 - HTML pages are locale-neutral: a default-locale `page.html` is also rendered for every other declared locale, with that locale's strings and variables, and written under each `/<locale>/` subfolder — unless an explicit `page.<locale>.html` or `page.<locale>.md` translation exists, in which case that file takes precedence.
 - A default-locale markdown page without a translation renders only for the default locale; the build prints a warning for each missing locale.
 - Strings come from a directory of per-locale YAML files (`strings/<locale>.yaml`) or from a single Xcode string catalog (`strings: "Localizable.xcstrings"`). In a catalog, keys are flat and a dot in a key is a nesting level; locale IDs are matched case-insensitively (`fr-FR` satisfies `fr-fr`).
-- The active locale's strings are exposed to templates and components as `{{ strings.… }}`, falling back to the default locale for missing keys.
+- The active locale's strings are exposed to templates and components as `{{ strings.… }}`, falling back to the default locale for missing keys. A string value may contain `{{ … }}` placeholders, resolved against the page's variables when the string is used — for example, `footer.copyright: Copyright {{ site.year }} My Company. All rights reserved.` renders with the current year.
 - `page.alternates` is ready-to-paste `<link rel="alternate" hreflang="…">` tags (one per locale that has the page, plus `x-default`); put it in the template's `<head>`.
 
 ## 5. Build and verify

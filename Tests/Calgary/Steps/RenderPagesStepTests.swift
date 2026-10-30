@@ -128,6 +128,37 @@ struct RenderPagesStepTests {
         #expect(output?.contains("/dated.html / 2026-01-01") == true)
     }
 
+    @Test("Exposes the current year as site.year")
+    func exposesCurrentYearAsSiteYear() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            """
+            ---
+            template: home
+            variables:
+              title: Year
+            ---
+
+            {{ site.year }}
+            """,
+            at: "content/year.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        let year = Calendar.current.component(.year, from: .now)
+        let output = try readFile(at: "build/year.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("<p>\(year)</p>") == true)
+    }
+
     @Test("Exposes page.canonical when the site has a base URL")
     func exposesCanonicalWhenSiteHasBaseUrl() throws {
         let fileSystem = InMemoryFileSystem()
@@ -860,6 +891,81 @@ struct RenderPagesStepTests {
 
         let english = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
         #expect(english?.contains("<header>Home / About</header>") == true)
+    }
+
+    @Test("Expands placeholders in localized strings")
+    func expandsPlaceholdersInLocalizedStrings() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            """
+            <!doctype html>
+            <html>
+            <head><title>{{ title }}</title></head>
+            <body>
+            {% include "components/header" %}
+            {{ content }}
+            {% include "components/footer" %}
+            </body>
+            </html>
+            """,
+            at: "templates/home.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            """
+            footer:
+              copyright: Copyright {{ site.year }} Test Site. All rights reserved.
+            """,
+            at: "strings/en.yaml",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            """
+            footer:
+              copyright: © {{ site.year }} Test Site. Tous droits réservés.
+            """,
+            at: "strings/fr-fr.yaml",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "<footer>{{ strings.footer.copyright }}</footer>",
+            at: "components/footer.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            """
+            ---
+            template: home
+            variables:
+              title: Bonjour
+            ---
+
+            Bonjour.
+            """,
+            at: "content/index.fr-fr.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .localize(defaultLocale: "en", locales: ["fr-fr"], strings: "strings")
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        let year = Calendar.current.component(.year, from: .now)
+        let english = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(english?.contains("<footer>Copyright \(year) Test Site. All rights reserved.</footer>") == true)
+
+        let french = try readFile(at: "build/fr-fr/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(french?.contains("<footer>© \(year) Test Site. Tous droits réservés.</footer>") == true)
     }
 
     @Test("Throws when the strings directory does not exist")

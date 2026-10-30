@@ -2,3 +2,4 @@ hero:
   tagline: A calm corner of the web.
 footer:
   builtWith: Built with Calgary.
+  copyright: Copyright {{ site.year }} Blue Turtle Canada. All rights reserved.

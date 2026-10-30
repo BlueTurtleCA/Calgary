@@ -196,7 +196,10 @@ struct RenderPagesStep: BuildStep {
         if let baseUrl = site.baseUrl {
             pageValues["canonical"] = .string(PageURL.absolute(for: outputRelative, baseUrl: baseUrl))
         }
-        var siteValues: [String: Variable] = ["name": .string(site.name)]
+        var siteValues: [String: Variable] = [
+            "name": .string(site.name),
+            "year": .integer(Calendar.current.component(.year, from: .now)),
+        ]
         siteValues["pages"] = pagesVariable
         for (key, value) in site.templateVariables {
             siteValues[key] = value

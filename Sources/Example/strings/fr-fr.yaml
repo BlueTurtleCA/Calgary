@@ -2,3 +2,4 @@ hero:
   tagline: Un coin paisible du web.
 footer:
   builtWith: Conçu avec Calgary.
+  copyright: © {{ site.year }} Blue Turtle Canada. Tous droits réservés.

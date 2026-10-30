@@ -128,7 +128,7 @@ A condition is a bare variable (a truthiness check) or a `==`/`!=` comparison. O
 
 A bare variable is an existence check: a missing variable is false. In a comparison, a missing variable fails the build, as do an unclosed `{% if %}` and a stray `{% else %}` or `{% endif %}`. A `{% for %}` collection must be a list (a missing or non-list variable fails the build), as do an unclosed `{% for %}` and a stray `{% endfor %}`.
 
-Built-in variables: `site.name`, `page.url`, and `page.date` (when declared). When the site is created with a `baseUrl`, pages also get `page.canonical` — the page's absolute URL, ready to paste into `<link rel="canonical">`. When the site is localized, pages also get `page.locale`, `site.defaultLocale`, and `page.alternates` (see [Localization](#localization)). Variables from a page's frontmatter override built-ins.
+Built-in variables: `site.name`, `site.year` (the current year, computed at build time), `page.url`, and `page.date` (when declared). When the site is created with a `baseUrl`, pages also get `page.canonical` — the page's absolute URL, ready to paste into `<link rel="canonical">`. When the site is localized, pages also get `page.locale`, `site.defaultLocale`, and `page.alternates` (see [Localization](#localization)). Variables from a page's frontmatter override built-ins.
 
 `site.pages` is a list of the site's pages, each with `title`, `url`, `locale`, and (when declared) `date`. A page's `title` is its `title` frontmatter variable, falling back to the file name. Use it with `{% for %}` to build listing pages and navigation:
 
@@ -217,6 +217,20 @@ nav:
 In a catalog, keys are flat: a dot in a key becomes a nesting level, so `nav.home` resolves as `{{ strings.nav.home }}`. Locale IDs are matched case-insensitively, so Xcode's `fr-FR` satisfies the site's `fr-fr`. Plural and device variations are not supported; only simple string values are read.
 
 In both cases, the active locale's strings are exposed to templates and components as `{{ strings.… }}` (dot notation). Any key missing in the locale falls back to the default locale, so a translation only needs the keys it changes.
+
+A string value may contain `{{ … }}` placeholders, resolved against the page's variables when the string is used — so a translation can carry a value that only the build knows:
+
+```yaml
+# strings/en.yaml
+footer:
+  copyright: Copyright {{ site.year }} My Company. All rights reserved.
+```
+
+```html
+<p>{{ strings.footer.copyright }}</p>
+```
+
+renders `Copyright 2026 My Company. All rights reserved.` (with the current year). Placeholders resolve against the same variables as the template — `site.year`, frontmatter variables, or other strings — and a placeholder that names a missing variable fails the build, as does a string that refers to itself, directly or indirectly. Only values in the `strings` namespace are expanded; every other variable value passes through literally.
 
 ### Built-in variables
 
