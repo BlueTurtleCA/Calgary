@@ -1196,4 +1196,378 @@ struct RenderPagesStepTests {
         #expect(french?.contains("en") == true)
         #expect(french?.contains("fr-fr") == true)
     }
+
+    @Test("site.pages exposes each page's frontmatter variables")
+    func sitePagesExposeFrontmatterVariables() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            """
+            ---
+            template: home
+            title: A Post
+            description: A short description.
+            ---
+
+            {% for page in site.pages where url == "/post.html" %}{{ page.description }}{% endfor %}
+            """,
+            at: "content/post.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        let output = try readFile(at: "build/post.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("A short description.") == true)
+    }
+
+    // MARK: Collections
+
+    /// Seeds a file system with a collection: a post template, an index
+    /// template, and two posts in content/blog.
+    private func seedCollectionSite(fileSystem: InMemoryFileSystem) throws {
+        try writeFile(
+            "<html><head><title>{{ title }}</title></head><body>{{ content }}</body></html>",
+            at: "templates/post.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "<html><body>{% for post in items %}<a href=\"{{ post.url }}\">{{ post.title }}</a>{% endfor %}</body></html>",
+            at: "templates/blog-index.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "---\ndate: 2026-01-02\ntitle: Second\ndescription: The second post.\n---\n\nSecond.",
+            at: "content/blog/second.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "---\ndate: 2026-01-01\ntitle: First\ndescription: The first post.\n---\n\nFirst.",
+            at: "content/blog/first.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+    }
+
+    @Test("A collection page renders with the collection's template")
+    func collectionPageRendersWithCollectionTemplate() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index")
+            .renderPages()
+
+        try site.build()
+
+        let post = try readFile(at: "build/blog/first.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(post?.contains("<title>First</title>") == true)
+        #expect(post?.contains("<p>First.</p>") == true)
+    }
+
+    @Test("A page's declared template overrides the collection's template")
+    func declaredTemplateOverridesCollectionTemplate() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+        try writeFile(
+            "<html><body>custom</body></html>",
+            at: "templates/custom.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "---\ntemplate: custom\ntitle: Custom\n---\n\nBody.",
+            at: "content/blog/custom.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index")
+            .renderPages()
+
+        try site.build()
+
+        let output = try readFile(at: "build/blog/custom.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("custom") == true)
+    }
+
+    @Test("Throws when a markdown page has no template and no collection")
+    func throwsWhenMarkdownPageHasNoTemplateAndNoCollection() throws {
+        let fileSystem = InMemoryFileSystem()
+        try writeFile("<html></html>", at: "templates/home.html", relativeTo: virtualRoot, in: fileSystem)
+        try writeFile("---\ntitle: No Template\n---\nBody.", at: "content/index.md", relativeTo: virtualRoot, in: fileSystem)
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .renderPages()
+
+        #expect(throws: BuildError.self) {
+            try site.build()
+        }
+    }
+
+    @Test("Exposes the collection's pages as site.<name>")
+    func exposesCollectionAsSiteVariable() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+        try writeFile(
+            "---\ntemplate: home\ntitle: Home\n---\n\n{% for post in site.blog %}{{ post.title }}{% endfor %}\n",
+            at: "content/index.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "<html><head><title>{{ title }}</title></head><body>{{ content }}</body></html>",
+            at: "templates/home.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index")
+            .renderPages()
+
+        try site.build()
+
+        // Newest first: Second (2026-01-02) before First (2026-01-01).
+        let output = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("SecondFirst") == true)
+    }
+
+    @Test("Renders the collection's index with its pages")
+    func rendersCollectionIndex() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index")
+            .renderPages()
+
+        try site.build()
+
+        let index = try readFile(at: "build/blog/index.html", relativeTo: virtualRoot, in: fileSystem)
+        // Newest first: Second (2026-01-02) before First (2026-01-01).
+        #expect(
+            index?.contains("<a href=\"/blog/second.html\">Second</a><a href=\"/blog/first.html\">First</a>") == true
+        )
+    }
+
+    @Test("Paginates the collection's index")
+    func paginatesCollectionIndex() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+        try writeFile(
+            "---\ndate: 2026-01-03\ntitle: Third\n---\n\nThird.",
+            at: "content/blog/third.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            """
+            <html><body>
+            {% for post in items %}{{ post.title }}{% endfor %}
+            {% if hasPrevious %}prev:{{ previousUrl }}{% endif %}
+            {% if hasNext %}next:{{ nextUrl }}{% endif %}
+            </body></html>
+            """,
+            at: "templates/blog-index.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index", paginate: 2)
+            .renderPages()
+
+        try site.build()
+
+        // Three posts, two per page: page 1 has the two newest, page 2 the
+        // oldest.
+        let page1 = try readFile(at: "build/blog/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(page1?.contains("ThirdSecond") == true)
+        #expect(page1?.contains("next:/blog/page/2/") == true)
+        #expect(page1?.contains("prev:") == false)
+
+        let page2 = try readFile(at: "build/blog/page/2/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(page2?.contains("First") == true)
+        #expect(page2?.contains("prev:/blog/") == true)
+        #expect(page2?.contains("next:") == false)
+
+        #expect(try readFile(at: "build/blog/page/3/index.html", relativeTo: virtualRoot, in: fileSystem) == nil)
+    }
+
+    @Test("A collection without paginate renders a single index page")
+    func collectionWithoutPaginateRendersSingleIndex() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+        try writeFile(
+            "<html><body>total:{{ total }} count:{{ count }} number:{{ number }} pages:{{ pageCount }}</body></html>",
+            at: "templates/blog-index.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index")
+            .renderPages()
+
+        try site.build()
+
+        let index = try readFile(at: "build/blog/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(index?.contains("total:2 count:2 number:1 pages:1") == true)
+    }
+
+    @Test("A site can have several collections")
+    func siteCanHaveSeveralCollections() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+        try writeFile(
+            "<html><body>gallery</body></html>",
+            at: "templates/gallery-item.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "<html><body>{% for item in items %}{{ item.title }}{% endfor %}</body></html>",
+            at: "templates/gallery-index.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "---\ntitle: A Photo\n---\n\nA photo.",
+            at: "content/gallery/photo.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index")
+            .addCollection(name: "gallery", source: "gallery", template: "gallery-item", index: "gallery-index")
+            .renderPages()
+
+        try site.build()
+
+        let blogIndex = try readFile(at: "build/blog/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(blogIndex?.contains("Second") == true)
+        #expect(blogIndex?.contains("A Photo") == false)
+
+        let galleryIndex = try readFile(at: "build/gallery/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(galleryIndex?.contains("A Photo") == true)
+        #expect(galleryIndex?.contains("Second") == false)
+    }
+
+    @Test("Throws when the collection's directory does not exist")
+    func throwsWhenCollectionDirectoryIsMissing() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "no-such-directory", template: "post", index: "blog-index")
+            .renderPages()
+
+        #expect(throws: BuildError.missingPath(
+            virtualRoot.appendingPathComponent("content/no-such-directory").path
+        )) {
+            try site.build()
+        }
+    }
+
+    @Test("Throws when two collections share a name")
+    func throwsWhenTwoCollectionsShareAName() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index")
+            .renderPages()
+
+        #expect(throws: BuildError.missingConfiguration("two collections are named 'blog'")) {
+            try site.build()
+        }
+    }
+
+    @Test("Throws when a collection name collides with a built-in site variable")
+    func throwsWhenCollectionNameCollidesWithBuiltIn() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .addCollection(name: "pages", source: "blog", template: "post", index: "blog-index")
+            .renderPages()
+
+        #expect(throws: BuildError.self) {
+            try site.build()
+        }
+    }
+
+    @Test("Throws when a page sits at the collection's root")
+    func throwsWhenAPageSitsAtTheCollectionRoot() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+        try writeFile(
+            "---\ntemplate: post\ntitle: Index\n---\n\nBody.",
+            at: "content/blog/index.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index")
+            .renderPages()
+
+        #expect(throws: BuildError.self) {
+            try site.build()
+        }
+    }
+
+    @Test("A localized collection lists the default-locale pages only")
+    func localizedCollectionListsDefaultLocalePagesOnly() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+        try writeFile(
+            "---\ndate: 2026-01-01\ntitle: Premier\n---\n\nPremier.",
+            at: "content/blog/first.fr-fr.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .localize(defaultLocale: "en", locales: ["fr-fr"])
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index")
+            .renderPages()
+
+        try site.build()
+
+        // The translation renders as an ordinary page…
+        #expect(try readFile(at: "build/fr-fr/blog/first.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        // …but the collection lists the default-locale page only, and the
+        // missing translation is not warned about.
+        let index = try readFile(at: "build/blog/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(index?.contains("/blog/first.html") == true)
+        #expect(index?.contains("fr-fr") == false)
+        #expect(site.warnings.isEmpty)
+    }
 }

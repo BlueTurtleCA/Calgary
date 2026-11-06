@@ -1,5 +1,31 @@
 import Foundation
 
+/// A collection of pages that share a template and get a generated index,
+/// optionally paginated: a blog, a gallery, a docs section.
+///
+/// A collection is declared with `Site.addCollection(name:source:template:
+/// index:paginate:)` and rendered by `renderPages()`: its pages render like
+/// any other page (using the collection's template when their frontmatter
+/// declares none), and after the pages render, the collection's index
+/// template renders once per page of the collection.
+struct SiteCollection: Sendable {
+    /// The name the collection is exposed to templates under:
+    /// `{{ site.<name> }}`.
+    let name: String
+    /// The directory of the collection's pages, relative to the source
+    /// directory (for example, `"blog"` for `content/blog`).
+    let source: String
+    /// The template the collection's pages render with when their frontmatter
+    /// declares none.
+    let template: String
+    /// The template the collection's index (and pagination) pages render
+    /// with.
+    let index: String
+    /// The number of pages per index page; `nil` renders a single index page
+    /// with every page.
+    let paginate: Int?
+}
+
 /// A static site and its build pipeline.
 ///
 /// A `Site` is configured with a builder-style API: each method appends a
@@ -74,6 +100,9 @@ public final class Site: @unchecked Sendable {
 
     /// The site's localization configuration, if any.
     private(set) var localization: Localization?
+
+    /// The site's collections, in the order they were added.
+    private(set) var collections: [SiteCollection] = []
 
     /// The steps in the pipeline, in the order they will run.
     public private(set) var steps: [any BuildStep] = []
@@ -248,6 +277,67 @@ public final class Site: @unchecked Sendable {
             defaultLocale: defaultLocale,
             locales: [defaultLocale] + locales,
             stringsPath: strings
+        )
+        return self
+    }
+
+    /// Adds a collection of pages that share a template and get a generated
+    /// index, optionally paginated.
+    ///
+    /// A collection is a directory of pages under the site's source directory
+    /// — for example, a blog's posts in `content/blog`. Each page renders
+    /// like any other page, using `template` when its frontmatter declares no
+    /// `template` of its own. After the pages render, the collection's index
+    /// template renders once per page of the collection:
+    ///
+    /// - with `paginate: nil`, a single `<output>/<source>/index.html`
+    ///   listing every page;
+    /// - with `paginate: n`, `<output>/<source>/index.html` plus
+    ///   `<output>/<source>/page/2/index.html`, and so on, each listing `n`
+    ///   pages.
+    ///
+    /// The collection's pages are exposed to every template as
+    /// `{{ site.<name> }}`: a list sorted by `date` descending (pages without
+    /// a `date` last), each entry carrying the page's `title`, `url`,
+    /// `locale`, `date`, and every frontmatter variable, so an index template
+    /// can show a post's `description` or `image`.
+    ///
+    /// The index template renders with the pagination variables `items` (the
+    /// pages on this page), `total`, `count`, `number`, `pageCount`,
+    /// `hasPrevious`, `hasNext`, and (when present) `previousUrl` and
+    /// `nextUrl`, plus the usual `site` and `page` built-ins.
+    ///
+    /// A site can have several collections (a blog and a gallery, for
+    /// example); each is exposed under its own name and renders its index
+    /// under its own directory.
+    ///
+    /// - Parameters:
+    ///   - name: The name the collection is exposed under, for example
+    ///     `"blog"` renders as `{{ site.blog }}`. Must be unique and must not
+    ///     collide with a built-in `site` variable.
+    ///   - source: The directory of the collection's pages, relative to the
+    ///     source directory (for example, `"blog"` for `content/blog`).
+    ///   - template: The template the collection's pages render with when
+    ///     their frontmatter declares none.
+    ///   - index: The template the collection's index pages render with.
+    ///   - paginate: The number of pages per index page. `nil` renders a
+    ///     single index page with every page. Defaults to `nil`.
+    @discardableResult
+    public func addCollection(
+        name: String,
+        source: String,
+        template: String,
+        index: String,
+        paginate: Int? = nil
+    ) -> Site {
+        collections.append(
+            SiteCollection(
+                name: name,
+                source: source,
+                template: template,
+                index: index,
+                paginate: paginate
+            )
         )
         return self
     }

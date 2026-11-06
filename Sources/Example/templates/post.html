@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="{{ page.locale }}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title }} — {{ site.name }}</title>
+    <link rel="canonical" href="{{ page.canonical }}">
+    {{ page.alternates }}
+    <link rel="stylesheet" href="/css/site.css">
+</head>
+<body class="mx-auto max-w-2xl px-4 py-8 font-sans leading-relaxed text-slate-900 antialiased">
+    {% include "components/header" %}
+    <main>
+        <article>
+            <h1 class="text-3xl font-bold tracking-tight">{{ title }}</h1>
+            {% if page.date %}<p class="mt-1 text-sm text-slate-500">{{ page.date }}</p>{% endif %}
+            {% if description %}<p class="mt-4 text-slate-600">{{ description }}</p>{% endif %}
+            {{ content }}
+        </article>
+        <p class="mt-8"><a href="/blog/" class="text-slate-500 underline">← All posts</a></p>
+    </main>
+    {% include "components/footer" %}
+</body>
+</html>

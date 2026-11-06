@@ -5,7 +5,8 @@ import Yams
 struct Page: Equatable {
     /// The name of the template to render the page with.
     ///
-    /// `nil` for standalone HTML pages, which are their own document.
+    /// `nil` for standalone HTML pages, which are their own document, and for
+    /// markdown pages that rely on their collection's default template.
     let template: String?
     /// The page's date, if declared in the frontmatter.
     let date: String?
@@ -49,16 +50,14 @@ enum Frontmatter {
     /// Parses `text` into a markdown page.
     ///
     /// The text must start with a `---` line, followed by YAML, followed by a
-    /// closing `---` line. The YAML must declare a `template`; it may declare
-    /// a `date` and a `variables` map. Everything after the closing `---` is
-    /// the page's body.
+    /// closing `---` line. The YAML may declare a `template` (required for
+    /// markdown pages outside a collection — the render step enforces it) and
+    /// a `date`, and any number of variables: a key at the top level of the
+    /// frontmatter is a variable, as are the entries of a `variables` map.
+    /// Everything after the closing `---` is the page's body.
     static func parse(_ text: String) throws -> Page {
         let (yaml, body) = try split(text)
-        let page = try page(fromYAML: yaml, body: body)
-        guard page.template != nil else {
-            throw FrontmatterError.missingTemplate
-        }
-        return page
+        return try page(fromYAML: yaml, body: body)
     }
 
     /// Parses `text` into an HTML page.
@@ -84,6 +83,7 @@ enum Frontmatter {
         var template: String?
         var date: String?
         var variables: [String: Variable] = [:]
+        var topLevel: [String: Variable] = [:]
 
         if !yaml.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            let node = try Yams.compose(yaml: yaml)
@@ -110,9 +110,16 @@ enum Frontmatter {
                         variables = map
                     }
                 default:
-                    break
+                    // Any other top-level key is a variable: `description: Hi`
+                    // renders as {{ description }}.
+                    topLevel[keyScalar.string] = try variable(from: value)
                 }
             }
+        }
+
+        // A top-level key wins over a same-named entry in the variables map.
+        for (key, value) in topLevel {
+            variables[key] = value
         }
 
         return Page(template: template, date: date, variables: Variables(variables), body: body)

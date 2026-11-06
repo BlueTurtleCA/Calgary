@@ -30,6 +30,16 @@ struct Main {
             baseUrl: "https://example.com"
         )
         .localize(defaultLocale: "en", locales: ["fr-fr"], strings: "strings")
+        // The blog: the posts in content/blog render with the `post`
+        // template, and the `blog-index` template renders the index —
+        // paginated two posts per page.
+        .addCollection(
+            name: "blog",
+            source: "blog",
+            template: "post",
+            index: "blog-index",
+            paginate: 2
+        )
         .copyAssets(from: "assets")
         // Build the site's CSS with Tailwind. `--yes` lets npx install
         // the CLI on first run without an interactive prompt.

@@ -51,10 +51,11 @@ struct RenderPagesStep: BuildStep {
 
         let pages = try pageFiles(in: sourceURL, glob: glob, fileSystem: site.fileSystem)
 
-        // Markdown pages render into a registered template, so templates are
-        // required only when the site has any of them.
+        // Markdown pages render into a registered template, and a
+        // collection's index renders from one, so templates are required
+        // when the site has any markdown pages or any collections.
         var templatesURL: URL?
-        if pages.contains(where: { !$0.path.hasSuffix(".html") }) {
+        if pages.contains(where: { !$0.path.hasSuffix(".html") }) || !site.collections.isEmpty {
             guard let templatesDirectory = site.templatesDirectory else {
                 throw BuildError.missingConfiguration("renderPages requires registerTemplates(in:)")
             }
@@ -66,8 +67,14 @@ struct RenderPagesStep: BuildStep {
         }
 
         // Collect every page's frontmatter up front so each page can see the
-        // site's pages as {{ site.pages }} while it renders.
+        // site's pages as {{ site.pages }} and the site's collections as
+        // {{ site.<name> }} while it renders.
         let pagesVariable = try Self.pageCollection(for: pages, site: site)
+        try Self.validate(site.collections)
+        let collections = try Self.collectionData(for: site.collections, pages: pages, site: site)
+        let collectionsVariable: [String: Variable] = Dictionary(
+            uniqueKeysWithValues: collections.map { ($0.collection.name, Variable.list($0.entries)) }
+        )
 
         for pageURL in pages {
             try renderPage(
@@ -78,7 +85,24 @@ struct RenderPagesStep: BuildStep {
                 resolver: resolver,
                 renderer: renderer,
                 stringTable: stringTable,
-                pagesVariable: pagesVariable
+                pagesVariable: pagesVariable,
+                collectionsVariable: collectionsVariable
+            )
+        }
+
+        // The collection indexes render after the pages, so the posts they
+        // link to exist in the output.
+        for data in collections {
+            try renderCollectionIndex(
+                for: data.collection,
+                entries: data.entries,
+                site: site,
+                templatesURL: templatesURL,
+                engine: engine,
+                resolver: resolver,
+                stringTable: stringTable,
+                pagesVariable: pagesVariable,
+                collectionsVariable: collectionsVariable
             )
         }
     }
@@ -94,7 +118,8 @@ struct RenderPagesStep: BuildStep {
         resolver: ComponentResolver,
         renderer: MarkdownRenderer,
         stringTable: StringTable?,
-        pagesVariable: Variable
+        pagesVariable: Variable,
+        collectionsVariable: [String: Variable]
     ) throws {
         let data = try site.fileSystem.read(contentsOf: pageURL)
         let text = String(data: data, encoding: .utf8) ?? ""
@@ -113,7 +138,8 @@ struct RenderPagesStep: BuildStep {
             defaultLocale: defaultLocale,
             outputRelative: outputRelative,
             sourceRelative: relative,
-            pagesVariable: pagesVariable
+            pagesVariable: pagesVariable,
+            collectionsVariable: collectionsVariable
         )
         .merged(with: page.variables)
 
@@ -128,15 +154,21 @@ struct RenderPagesStep: BuildStep {
         let bodyHTML = isHTMLPage ? bodyWithIncludes : renderer.render(bodyWithIncludes)
 
         let html: String
-        if let templateName = page.template {
+        if isHTMLPage {
+            html = bodyHTML
+        } else {
+            // A markdown page renders with its declared template, falling
+            // back to the template of the collection it belongs to.
+            let templateName = page.template ?? Self.collection(for: relative, in: site.collections)?.template
+            guard let templateName else {
+                throw FrontmatterError.missingTemplate
+            }
             guard let templatesURL else {
                 throw BuildError.missingConfiguration("renderPages requires registerTemplates(in:)")
             }
             variables = variables.merged(with: Variables(["content": .string(bodyHTML)]))
             let template = try loadTemplate(named: templateName, in: templatesURL, fileSystem: site.fileSystem)
             html = try engine.render(template, variables: variables, resolver: resolver)
-        } else {
-            html = bodyHTML
         }
 
         let outputURL = site.outputDirectory.appendingPathComponent(outputRelative)
@@ -152,6 +184,10 @@ struct RenderPagesStep: BuildStep {
         // page needs an explicit translation file; warn when one is missing.
         if locale == defaultLocale, let localization = site.localization {
             let base = Self.baseName(of: relative)
+            // Collection pages are independent pages: a blog does not
+            // translate every post, so a missing translation is not warned
+            // about.
+            let inCollection = Self.collection(for: relative, in: site.collections) != nil
             for otherLocale in localization.locales where otherLocale != defaultLocale {
                 guard !Self.hasTranslation(
                     of: base,
@@ -169,9 +205,10 @@ struct RenderPagesStep: BuildStep {
                         resolver: resolver,
                         renderer: renderer,
                         stringTable: stringTable,
-                        pagesVariable: pagesVariable
+                        pagesVariable: pagesVariable,
+                        collectionsVariable: collectionsVariable
                     )
-                } else {
+                } else if !inCollection {
                     site.warn(
                         "no '\(otherLocale)' version of '\(relative)' found; '\(otherLocale)/\(base).html' was not rendered"
                     )
@@ -187,7 +224,8 @@ struct RenderPagesStep: BuildStep {
         defaultLocale: String,
         outputRelative: String,
         sourceRelative: String,
-        pagesVariable: Variable
+        pagesVariable: Variable,
+        collectionsVariable: [String: Variable]
     ) -> Variables {
         var pageValues: [String: Variable] = ["url": .string("/" + outputRelative)]
         if let date = page.date {
@@ -196,18 +234,15 @@ struct RenderPagesStep: BuildStep {
         if let baseUrl = site.baseUrl {
             pageValues["canonical"] = .string(PageURL.absolute(for: outputRelative, baseUrl: baseUrl))
         }
-        var siteValues: [String: Variable] = [
-            "name": .string(site.name),
-            "year": .integer(Calendar.current.component(.year, from: .now)),
-        ]
-        siteValues["pages"] = pagesVariable
-        for (key, value) in site.templateVariables {
-            siteValues[key] = value
-        }
+
+        var variables = siteVariables(
+            for: site,
+            pagesVariable: pagesVariable,
+            collectionsVariable: collectionsVariable
+        )
 
         if site.localization != nil {
             pageValues["locale"] = .string(locale)
-            siteValues["defaultLocale"] = .string(defaultLocale)
             if let alternates = alternateLinks(
                 for: site,
                 sourceRelative: sourceRelative,
@@ -218,10 +253,32 @@ struct RenderPagesStep: BuildStep {
             }
         }
 
-        return Variables([
-            "site": .map(siteValues),
-            "page": .map(pageValues),
-        ])
+        return variables.merged(with: Variables(["page": .map(pageValues)]))
+    }
+
+    /// The `site` namespace: the built-ins (`name`, `year`, `pages`), the
+    /// site's `templateVariables`, the site's collections (each exposed as
+    /// `site.<name>`), and (when localized) `defaultLocale`.
+    private func siteVariables(
+        for site: Site,
+        pagesVariable: Variable,
+        collectionsVariable: [String: Variable]
+    ) -> Variables {
+        var siteValues: [String: Variable] = [
+            "name": .string(site.name),
+            "year": .integer(Calendar.current.component(.year, from: .now)),
+        ]
+        siteValues["pages"] = pagesVariable
+        for (key, value) in site.templateVariables {
+            siteValues[key] = value
+        }
+        for (key, value) in collectionsVariable {
+            siteValues[key] = value
+        }
+        if let localization = site.localization {
+            siteValues["defaultLocale"] = .string(localization.defaultLocale)
+        }
+        return Variables(["site": .map(siteValues)])
     }
 
     private func loadTemplate(named name: String, in directory: URL, fileSystem: any FileSystem) throws -> String {
@@ -415,34 +472,45 @@ struct RenderPagesStep: BuildStep {
     // MARK: Page collection
 
     /// Builds the `site.pages` variable: a list with one entry per page, each
-    /// a map of the page's `title`, `url`, `locale`, and (when declared)
-    /// `date`.
+    /// a map of the page's frontmatter variables with the canonical `title`,
+    /// `url`, `locale`, and (when declared) `date` layered on top.
     private static func pageCollection(for pages: [URL], site: Site) throws -> Variable {
         let fileSystem = site.fileSystem
-        let defaultLocale = site.localization?.defaultLocale ?? "default"
         var entries: [Variable] = []
         for pageURL in pages {
-            let data = try fileSystem.read(contentsOf: pageURL)
-            let text = String(data: data, encoding: .utf8) ?? ""
-            let isHTMLPage = pageURL.path.hasSuffix(".html")
-            let page = isHTMLPage ? try Frontmatter.parseHTML(text) : try Frontmatter.parse(text)
+            let page = try Self.parsedPage(at: pageURL, fileSystem: fileSystem)
             let relative = fileSystem.relativePath(of: pageURL, to: site.sourceDirectory)
-            let locale = Self.locale(of: relative, in: site.localization)
-            let outputRelative = Self.outputPath(for: relative, locale: locale, defaultLocale: defaultLocale)
-            var entry: [String: Variable] = [
-                "title": .string(
-                    page.variables["title"]?.stringValue
-                        ?? Self.fallbackTitle(for: relative, locale: locale, defaultLocale: defaultLocale)
-                ),
-                "url": .string("/" + outputRelative),
-                "locale": .string(locale),
-            ]
-            if let date = page.date {
-                entry["date"] = .string(date)
-            }
-            entries.append(.map(entry))
+            entries.append(.map(Self.entry(for: page, relative: relative, site: site)))
         }
         return .list(entries)
+    }
+
+    /// Reads and parses a page file.
+    private static func parsedPage(at pageURL: URL, fileSystem: any FileSystem) throws -> Page {
+        let data = try fileSystem.read(contentsOf: pageURL)
+        let text = String(data: data, encoding: .utf8) ?? ""
+        let isHTMLPage = pageURL.path.hasSuffix(".html")
+        return isHTMLPage ? try Frontmatter.parseHTML(text) : try Frontmatter.parse(text)
+    }
+
+    /// Builds one entry of `site.pages` (and of a collection's list): the
+    /// page's frontmatter variables, with the canonical `title`, `url`,
+    /// `locale`, and (when declared) `date` layered on top.
+    private static func entry(for page: Page, relative: String, site: Site) -> [String: Variable] {
+        let defaultLocale = site.localization?.defaultLocale ?? "default"
+        let locale = Self.locale(of: relative, in: site.localization)
+        let outputRelative = Self.outputPath(for: relative, locale: locale, defaultLocale: defaultLocale)
+        var entry: [String: Variable] = page.variables.values
+        entry["title"] = .string(
+            page.variables["title"]?.stringValue
+                ?? Self.fallbackTitle(for: relative, locale: locale, defaultLocale: defaultLocale)
+        )
+        entry["url"] = .string("/" + outputRelative)
+        entry["locale"] = .string(locale)
+        if let date = page.date {
+            entry["date"] = .string(date)
+        }
+        return entry
     }
 
     /// A page's title when its frontmatter declares none: the file name
@@ -454,5 +522,184 @@ struct RenderPagesStep: BuildStep {
             name = String(name.dropLast(locale.count + 1))
         }
         return name
+    }
+
+    // MARK: Collections
+
+    /// The data for a site's collections, built before any page renders so
+    /// every page can see the collections as `{{ site.<name> }}`.
+    private struct CollectionData {
+        let collection: SiteCollection
+        /// The collection's pages as template variables, newest first.
+        let entries: [Variable]
+    }
+
+    /// Validates the site's collections: names must be unique and must not
+    /// collide with a built-in `site` variable, and a page size must be
+    /// positive.
+    private static func validate(_ collections: [SiteCollection]) throws {
+        let builtIns: Set<String> = ["name", "year", "pages", "defaultLocale"]
+        var seen: Set<String> = []
+        for collection in collections {
+            guard !builtIns.contains(collection.name) else {
+                throw BuildError.missingConfiguration(
+                    "the collection name '\(collection.name)' collides with a built-in site variable"
+                )
+            }
+            guard seen.insert(collection.name).inserted else {
+                throw BuildError.missingConfiguration("two collections are named '\(collection.name)'")
+            }
+            if let paginate = collection.paginate, paginate < 1 {
+                throw BuildError.missingConfiguration(
+                    "collection '\(collection.name)' paginates by \(paginate); the page size must be at least 1"
+                )
+            }
+        }
+    }
+
+    /// Builds the data for each of the site's collections: its pages, as
+    /// template variables, sorted by `date` descending (pages without a
+    /// `date` last, then by file name).
+    ///
+    /// A page belongs to a collection when its source path is under the
+    /// collection's directory. When the site is localized, the collection
+    /// lists the default-locale pages only; a page's translations render as
+    /// ordinary pages.
+    private static func collectionData(
+        for collections: [SiteCollection],
+        pages: [URL],
+        site: Site
+    ) throws -> [CollectionData] {
+        let fileSystem = site.fileSystem
+        let defaultLocale = site.localization?.defaultLocale ?? "default"
+        var data: [CollectionData] = []
+        for collection in collections {
+            let sourceDirectory = site.sourceDirectory.appendingPathComponent(collection.source)
+            guard fileSystem.fileExists(atPath: sourceDirectory.path) else {
+                throw BuildError.missingPath(sourceDirectory.path)
+            }
+            // A page at the collection's root would be overwritten by the
+            // generated index.
+            for indexPage in ["index.md", "index.html"] {
+                let path = sourceDirectory.appendingPathComponent(indexPage)
+                if fileSystem.fileExists(atPath: path.path) {
+                    throw BuildError.missingConfiguration(
+                        "collection '\(collection.name)' generates its index at '\(collection.source)/index.html', so there cannot be a page at '\(collection.source)/\(indexPage)'"
+                    )
+                }
+            }
+
+            var dated: [(date: String, name: String, entry: [String: Variable])] = []
+            var undated: [(name: String, entry: [String: Variable])] = []
+            for pageURL in pages {
+                let relative = fileSystem.relativePath(of: pageURL, to: site.sourceDirectory)
+                guard relative.hasPrefix(collection.source + "/") else { continue }
+                let page = try parsedPage(at: pageURL, fileSystem: fileSystem)
+                let locale = Self.locale(of: relative, in: site.localization)
+                guard locale == defaultLocale else { continue }
+                let entry = Self.entry(for: page, relative: relative, site: site)
+                let name = relative.split(separator: "/").last.map(String.init) ?? relative
+                if let date = page.date {
+                    dated.append((date: date, name: name, entry: entry))
+                } else {
+                    undated.append((name: name, entry: entry))
+                }
+            }
+            dated.sort {
+                $0.date == $1.date ? $0.name < $1.name : $0.date > $1.date
+            }
+            undated.sort { $0.name < $1.name }
+            let entries: [Variable] = dated.map { .map($0.entry) } + undated.map { .map($0.entry) }
+            data.append(CollectionData(collection: collection, entries: entries))
+        }
+        return data
+    }
+
+    /// The collection a page belongs to, if any: the first collection whose
+    /// directory contains the page's source path.
+    private static func collection(for relative: String, in collections: [SiteCollection]) -> SiteCollection? {
+        collections.first { relative.hasPrefix($0.source + "/") }
+    }
+
+    /// Renders a collection's index: one page per chunk of its entries, from
+    /// the collection's index template.
+    private func renderCollectionIndex(
+        for collection: SiteCollection,
+        entries: [Variable],
+        site: Site,
+        templatesURL: URL?,
+        engine: TemplateEngine,
+        resolver: ComponentResolver,
+        stringTable: StringTable?,
+        pagesVariable: Variable,
+        collectionsVariable: [String: Variable]
+    ) throws {
+        guard let templatesURL else {
+            throw BuildError.missingConfiguration("renderPages requires registerTemplates(in:)")
+        }
+        let defaultLocale = site.localization?.defaultLocale ?? "default"
+        let pageCount: Int
+        if let paginate = collection.paginate {
+            pageCount = max(1, (entries.count + paginate - 1) / paginate)
+        } else {
+            pageCount = 1
+        }
+        let template = try loadTemplate(named: collection.index, in: templatesURL, fileSystem: site.fileSystem)
+
+        for number in 1...pageCount {
+            let perPage = collection.paginate ?? entries.count
+            let start = (number - 1) * perPage
+            let items = Array(entries[start..<min(start + perPage, entries.count)])
+            let outputRelative = number == 1
+                ? collection.source + "/index.html"
+                : "\(collection.source)/page/\(number)/index.html"
+
+            var pageValues: [String: Variable] = ["url": .string("/" + PageURL.path(for: outputRelative))]
+            if let baseUrl = site.baseUrl {
+                pageValues["canonical"] = .string(PageURL.absolute(for: outputRelative, baseUrl: baseUrl))
+            }
+            if site.localization != nil {
+                pageValues["locale"] = .string(defaultLocale)
+            }
+
+            var variables = siteVariables(
+                for: site,
+                pagesVariable: pagesVariable,
+                collectionsVariable: collectionsVariable
+            )
+            .merged(with: Variables(["page": .map(pageValues)]))
+            if let stringTable {
+                variables = variables.merged(with: stringTable.variables(for: defaultLocale))
+            }
+            variables = variables.merged(with: Variables([
+                "items": .list(items),
+                "total": .integer(entries.count),
+                "count": .integer(items.count),
+                "number": .integer(number),
+                "pageCount": .integer(pageCount),
+                "hasPrevious": .boolean(number > 1),
+                "hasNext": .boolean(number < pageCount),
+            ]))
+            if number > 1 {
+                let previous = number - 1 == 1
+                    ? collection.source + "/index.html"
+                    : "\(collection.source)/page/\(number - 1)/index.html"
+                variables = variables.merged(
+                    with: Variables(["previousUrl": .string("/" + PageURL.path(for: previous))])
+                )
+            }
+            if number < pageCount {
+                let next = "\(collection.source)/page/\(number + 1)/index.html"
+                variables = variables.merged(with: Variables(["nextUrl": .string("/" + PageURL.path(for: next))]))
+            }
+
+            let html = try engine.render(template, variables: variables, resolver: resolver)
+            let outputURL = site.outputDirectory.appendingPathComponent(outputRelative)
+            try site.fileSystem.createDirectory(
+                at: outputURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try site.fileSystem.write(Data(html.utf8), to: outputURL)
+        }
     }
 }

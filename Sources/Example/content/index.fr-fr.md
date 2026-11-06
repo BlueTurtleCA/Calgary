@@ -18,3 +18,12 @@ des composants — de simples fichiers HTML que le template inclut.
 - `templates/home.html` est le template dans lequel elle est rendue.
 - `components/header.html` et `components/footer.html` sont inclus par le template.
 - `components/hero.html` est un composant que la page inclut.
+
+## Derniers articles
+
+Les articles ci-dessous viennent de la collection `blog` — la même liste que
+celle que l'index du blog rend :
+
+{% for post in site.blog %}
+- [{{ post.title }}]({{ post.url }}) — {{ post.description }}
+{% endfor %}

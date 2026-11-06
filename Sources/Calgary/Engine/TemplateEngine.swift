@@ -50,7 +50,7 @@ enum TemplateError: Error, Equatable, CustomStringConvertible {
         case .unexpectedLoopTag(let tag):
             return "Unexpected {% \(tag) %}: no matching {% for %}"
         case .invalidLoop(let clause):
-            return "Invalid loop: {% for \(clause) %} — expected 'item in collection'"
+            return "Invalid loop: {% for \(clause) %} — expected 'item in collection [where field operator value]'"
         case .notAList(let name):
             return "'\(name)' is not a list; {% for %} requires a list"
         }
@@ -103,14 +103,22 @@ struct TemplateEngine: Sendable {
     /// possibly empty).
     private static let structuralTagPattern = "\\{%\\s*(if|else|endif|for|endfor)\\b\\s*(.*?)\\s*%\\}"
 
-    /// Parses a `{% for %}` clause into its item variable and collection
-    /// variable.
-    private static let forClausePattern = "^([A-Za-z0-9_]+)\\s+in\\s+([A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*)$"
+    /// Matches a `{% for %}` clause: `item in collection`, optionally
+    /// followed by a `where` filter — `where field operator value`, where the
+    /// operator is `==`, `!=`, `startsWith`, `endsWith`, or `contains`, and
+    /// the value is a quoted string, a number, or a variable reference.
+    private static let forClausePattern =
+        "^([A-Za-z0-9_]+)\\s+in\\s+([A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*)"
+            + "(?:\\s+where\\s+([A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*)"
+            + "\\s+(==|!=|startsWith|endsWith|contains)"
+            + "\\s+(\"([^\"]*)\"|([A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*|-?\\d+(?:\\.\\d+)?)))?$"
 
     /// Evaluates `{% for %}` loops, rendering the loop body once per item of
     /// the collection, or the `{% else %}` branch when the collection is
-    /// empty. Runs before conditionals and interpolation so a loop body can
-    /// contain either, with the item variable in scope for the whole body.
+    /// empty. A loop may carry a `where` filter (`item in collection where
+    /// field operator value`) that excludes items whose field does not match.
+    /// Runs before conditionals and interpolation so a loop body can contain
+    /// either, with the item variable in scope for the whole body.
     private func processForLoops(
         in text: String,
         variables: Variables,
@@ -169,8 +177,12 @@ struct TemplateEngine: Sendable {
             throw TemplateError.unclosedLoop(Self.conditionText(of: forMatch, in: text))
         }
 
-        let (itemVariable, collectionVariable) = try Self.parseForClause(Self.conditionText(of: forMatch, in: text))
-        let collection = try Self.collection(of: collectionVariable, in: variables)
+        let clause = Self.conditionText(of: forMatch, in: text)
+        let (itemVariable, collectionVariable, filter) = try Self.parseForClause(clause)
+        var collection = try Self.collection(of: collectionVariable, in: variables)
+        if let filter {
+            collection = try Self.apply(filter, to: collection, clause: clause, variables: variables)
+        }
 
         let thenBranch = String(text[forMatch.range.upperBound..<(elseRange?.lowerBound ?? endRange.lowerBound)])
         let elseBranch = elseRange.map { String(text[$0.upperBound..<endRange.lowerBound]) } ?? ""
@@ -196,9 +208,17 @@ struct TemplateEngine: Sendable {
         return String(text[..<forMatch.range.lowerBound]) + rendered + suffix
     }
 
-    /// Parses a `{% for %}` clause into its item variable and collection
-    /// variable.
-    private static func parseForClause(_ clause: String) throws -> (item: String, collection: String) {
+    /// A `{% for %}` `where` filter: `field operator value`, where the value
+    /// is the raw text of the clause (possibly quoted).
+    private struct LoopFilter {
+        let field: String
+        let op: String
+        let value: String
+    }
+
+    /// Parses a `{% for %}` clause into its item variable, collection
+    /// variable, and optional `where` filter.
+    private static func parseForClause(_ clause: String) throws -> (item: String, collection: String, filter: LoopFilter?) {
         let regex = try NSRegularExpression(pattern: Self.forClausePattern)
         guard
             let match = regex.firstMatch(in: clause, range: NSRange(clause.startIndex..., in: clause)),
@@ -207,7 +227,82 @@ struct TemplateEngine: Sendable {
         else {
             throw TemplateError.invalidLoop(clause)
         }
-        return (String(clause[itemRange]), String(clause[collectionRange]))
+        var filter: LoopFilter?
+        if
+            let fieldRange = Range(match.range(at: 3), in: clause),
+            let opRange = Range(match.range(at: 4), in: clause),
+            let valueRange = Range(match.range(at: 5), in: clause)
+        {
+            filter = LoopFilter(
+                field: String(clause[fieldRange]),
+                op: String(clause[opRange]),
+                value: String(clause[valueRange])
+            )
+        }
+        return (String(clause[itemRange]), String(clause[collectionRange]), filter)
+    }
+
+    /// Keeps the items of a loop collection that match the filter. An item
+    /// whose field is missing (or not a map) is excluded, since filtering is
+    /// about absence as much as presence.
+    private static func apply(
+        _ filter: LoopFilter,
+        to items: [Variable],
+        clause: String,
+        variables: Variables
+    ) throws -> [Variable] {
+        let expected = try filterValue(filter.value, in: clause, variables: variables)
+        return items.filter { item in
+            guard let field = Self.value(ofField: filter.field, in: item) else { return false }
+            switch filter.op {
+            case "==":
+                return field.isEqualTo(expected)
+            case "!=":
+                return !field.isEqualTo(expected)
+            case "startsWith":
+                return field.stringValue.hasPrefix(expected.stringValue)
+            case "endsWith":
+                return field.stringValue.hasSuffix(expected.stringValue)
+            case "contains":
+                return field.stringValue.contains(expected.stringValue)
+            default:
+                return false
+            }
+        }
+    }
+
+    /// Resolves a `where` filter value: a quoted string, a number, or a
+    /// variable reference resolved against the loop's outer variables.
+    private static func filterValue(_ raw: String, in clause: String, variables: Variables) throws -> Variable {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        if trimmed.count >= 2, trimmed.hasPrefix("\""), trimmed.hasSuffix("\"") {
+            return .string(String(trimmed.dropFirst().dropLast()))
+        }
+        if let integer = Int(trimmed) {
+            return .integer(integer)
+        }
+        if let number = Double(trimmed) {
+            return .number(number)
+        }
+        guard isVariableName(trimmed) else {
+            throw TemplateError.invalidLoop(clause)
+        }
+        guard let variable = variables[trimmed] else {
+            throw TemplateError.missingVariable(trimmed)
+        }
+        return variable
+    }
+
+    /// Looks up a (possibly dot-notation) field in a loop item.
+    private static func value(ofField field: String, in item: Variable) -> Variable? {
+        var current = item
+        for part in field.split(separator: ".") {
+            guard case .map(let map) = current, let next = map[String(part)] else {
+                return nil
+            }
+            current = next
+        }
+        return current
     }
 
     /// Resolves a `{% for %}` collection: a missing variable is an error, as

@@ -110,9 +110,10 @@ Hi, welcome to {{ title }}!
 {% include "components/header" %}
 ```
 
-- `template` (required) — selects the template by name (`home` → `templates/home.html`).
-- `date` (optional) — exposed as `{{ page.date }}`.
+- `template` — selects the template by name (`home` → `templates/home.html`). Required for markdown pages outside a collection; a collection's pages may omit it and use the collection's template.
+- `date` (optional) — exposed as `{{ page.date }}`; sorts a collection's index, newest first.
 - `variables` (optional) — values exposed to the page and its components.
+- **Any other top-level key is a variable** — `title: Hello` renders as `{{ title }}` just like an entry under `variables:` (a top-level key wins over a same-named `variables` entry). This is how a post carries a `description` or `image` that its collection's index can show.
 - The output path mirrors the source path: `content/blog/post.md` → `build/blog/post.html`.
 
 ### Template — `templates/home.html`
@@ -142,6 +143,7 @@ Markdown (`.md`) or raw HTML (`.html`) partials. They may use variables and incl
 - `{% include "path" key={{ variable }} %}` — include with a variable argument; the value is resolved from the current context and keeps its type
 - `{% if condition %} … {% else %} … {% endif %}` — conditional; `else` is optional and nesting is supported
 - `{% for item in items %} … {% else %} … {% endfor %}` — loop over a list; the item is available as `{{ item }}` (dot notation for map items), and the optional `else` branch renders when the list is empty
+- `{% for item in items where field operator value %}` — a loop may carry a `where` filter that excludes items whose field does not match: the operator is `==`, `!=`, `startsWith`, `endsWith`, or `contains`; the value is a quoted string, a number, or a variable; an item with a missing field is excluded
 - `strings.…` values may contain `{{ … }}` placeholders, resolved against the page's variables (including other strings) when the string is used; a placeholder that names a missing variable fails the build, as does a string that refers to itself, directly or indirectly. Only the `strings` namespace is expanded; other variable values pass through literally
 
 A condition is a bare variable (a truthiness check; a missing variable is false) or a `==`/`!=` comparison of quoted strings, numbers, or variables:
@@ -157,7 +159,7 @@ A condition is a bare variable (a truthiness check; a missing variable is false)
 In a comparison, a missing variable fails the build, as do an unclosed `{% if %}` and a stray `{% else %}` or `{% endif %}`. A `{% for %}` collection must be a list (a missing or non-list variable fails the build), as do an unclosed `{% for %}` and a stray `{% endfor %}`.
 
 - Built-in variables: `site.name`, `site.year` (the current year, computed at build time), `site.pages`, `page.url`, `page.date` (when declared); when the site is created with a `baseUrl`, also `page.canonical` (the page's absolute URL, for `<link rel="canonical">`); when the site is localized, also `page.locale`, `site.defaultLocale`, and `page.alternates`. Frontmatter variables override built-ins.
-- `site.pages` is a list of the site's pages, each with `title`, `url`, `locale`, and (when declared) `date`; a page's `title` falls back to its file name. Use it with `{% for %}` to build listing pages and navigation:
+- `site.pages` is a list of the site's pages, each with the page's frontmatter variables plus `title`, `url`, `locale`, and (when declared) `date`; a page's `title` falls back to its file name. Use it with `{% for %}` to build listing pages and navigation:
 
 ```html
 {% for page in site.pages %}
@@ -186,6 +188,33 @@ let site = Site(name: "My Site", source: "content", output: "build")
 - The active locale's strings are exposed to templates and components as `{{ strings.… }}`, falling back to the default locale for missing keys. A string value may contain `{{ … }}` placeholders, resolved against the page's variables when the string is used — for example, `footer.copyright: Copyright {{ site.year }} My Company. All rights reserved.` renders with the current year.
 - `page.alternates` is ready-to-paste `<link rel="alternate" hreflang="…">` tags (one per locale that has the page, plus `x-default`); put it in the template's `<head>`.
 
+### Collections (optional)
+
+A collection is a directory of pages that share a template and get a generated index — a blog, a gallery, a docs section. Declare it in the pipeline:
+
+```swift
+let site = Site(name: "My Site", source: "content", output: "build")
+    .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index", paginate: 2)
+    .registerTemplates(in: "templates")
+    .registerComponents(in: "components")
+    .renderPages()
+```
+
+- The collection's pages (here, `content/blog/*.md`) render like any other page, using the collection's `template` when their frontmatter declares none.
+- After the pages render, the collection's `index` template renders once per page of the collection: `build/blog/index.html` (and `build/blog/page/2/index.html`, … when `paginate:` is set). The index template renders with `items` (the pages on this page), `total`, `count`, `number`, `pageCount`, `hasPrevious`, `hasNext`, and (when present) `previousUrl`/`nextUrl`, plus the usual `site` and `page` built-ins.
+- The collection's pages are exposed to every template as `{{ site.<name> }}` (here, `{{ site.blog }}`), sorted by `date` descending (undated pages last), each entry carrying the page's `title`, `url`, `locale`, `date`, and every frontmatter variable — so the index can show a post's `description` without extra plumbing:
+
+```html
+{% for post in items %}
+  <h2><a href="{{ post.url }}">{{ post.title }}</a></h2>
+  <p>{{ post.description }}</p>
+{% endfor %}
+```
+
+- A site can have several collections (a blog and a gallery); each is exposed under its own name and renders its index under its own directory. Collection names must be unique and must not collide with a built-in `site` variable.
+- There cannot be a page at the collection's root (`content/blog/index.md`): the generated index owns that path.
+- When the site is localized, a collection lists the default-locale pages only, and a missing translation of a collection page is not warned about.
+
 ## 5. Build and verify
 
 ```sh
@@ -206,6 +235,7 @@ swift run MySite
 | `registerTemplates(in:)` | Registers the templates directory (required by `renderPages`) |
 | `registerComponents(in:)` | Registers the components directory |
 | `localize(defaultLocale:locales:strings:)` | Configures locales and the strings source (YAML directory or `.xcstrings` catalog); translations render under `/<locale>/` |
+| `addCollection(name:source:template:index:paginate:)` | Adds a collection of pages that share a template and get a generated index, optionally paginated; the pages are exposed to templates as `{{ site.<name> }}` |
 | `renderPages(glob:)` | Renders every page matching the glob (default `**/*.{md,html}`) into its template |
 | `minify(glob:)` | Minifies output files matching the glob (default `**/*.{html,css}`): strips HTML and CSS comments and collapses whitespace; raw HTML elements (`<script>`, `<style>`, `<textarea>`, `<pre>`, `<code>`) and CSS strings are untouched |
 | `generateSitemap(baseUrl:)` | Writes `sitemap.xml` listing every `.html` file in the output under `baseUrl` (defaulting to the site's `baseUrl`), with a `<lastmod>` per page (frontmatter `date`, falling back to file modification time) and, for localized sites, `hreflang` alternates; run after `renderPages` |
@@ -249,7 +279,7 @@ Declare `tailwindcss` and `@tailwindcss/cli` in a `package.json` at the project 
 ## Gotchas
 
 - Relative paths in `Site(...)` resolve against the site's `root`, which defaults to the current working directory. When the executable is run from Xcode's run button, that is DerivedData, not the project root — pass an explicit `root:` anchored to the pipeline file with `#filePath` (as in the example above).
-- `renderPages` requires `registerTemplates(in:)` to have been called.
+- `renderPages` requires `registerTemplates(in:)` to have been called — including when the site has collections, whose pages and index render from the templates directory.
 - Markdown is rendered with smart punctuation disabled — straight quotes and `{% include %}` tags pass through literally.
 - `open(_:)` is a no-op off Apple platforms.
 - A `.<locale>.md` page is a translation only when that locale is declared in `localize`; otherwise it's an ordinary page.

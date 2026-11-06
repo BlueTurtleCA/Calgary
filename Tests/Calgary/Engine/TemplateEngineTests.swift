@@ -1005,4 +1005,180 @@ struct TemplateEngineTests {
             )
         }
     }
+
+    // MARK: Loop filters
+
+    @Test("A loop can filter with where startsWith")
+    func loopFiltersWithStartsWith() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{% for page in pages where url startsWith \"/blog/\" %}<a href=\"{{ page.url }}\">{{ page.title }}</a>{% endfor %}",
+            variables: Variables([
+                "pages": .list([
+                    .map(["title": .string("Home"), "url": .string("/index.html")]),
+                    .map(["title": .string("Post"), "url": .string("/blog/post.html")]),
+                    .map(["title": .string("About"), "url": .string("/about.html")]),
+                ]),
+            ]),
+            resolver: resolver
+        )
+
+        #expect(result == "<a href=\"/blog/post.html\">Post</a>")
+    }
+
+    @Test("A loop can filter with where == and !=")
+    func loopFiltersWithEquality() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+        let variables = Variables([
+            "posts": .list([
+                .map(["title": .string("One"), "status": .string("published")]),
+                .map(["title": .string("Two"), "status": .string("draft")]),
+            ]),
+        ])
+
+        let published = try engine.render(
+            "{% for post in posts where status == \"published\" %}{{ post.title }}{% endfor %}",
+            variables: variables,
+            resolver: resolver
+        )
+        let drafts = try engine.render(
+            "{% for post in posts where status != \"published\" %}{{ post.title }}{% endfor %}",
+            variables: variables,
+            resolver: resolver
+        )
+
+        #expect(published == "One")
+        #expect(drafts == "Two")
+    }
+
+    @Test("A loop can filter with where contains and endsWith")
+    func loopFiltersWithContainsAndEndsWith() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+        let variables = Variables([
+            "pages": .list([
+                .map(["url": .string("/blog/post.html")]),
+                .map(["url": .string("/blog/page/2/")]),
+            ]),
+        ])
+
+        let posts = try engine.render(
+            "{% for page in pages where url contains \"post\" %}{{ page.url }}{% endfor %}",
+            variables: variables,
+            resolver: resolver
+        )
+        let indexes = try engine.render(
+            "{% for page in pages where url endsWith \"/\" %}{{ page.url }}{% endfor %}",
+            variables: variables,
+            resolver: resolver
+        )
+
+        #expect(posts == "/blog/post.html")
+        #expect(indexes == "/blog/page/2/")
+    }
+
+    @Test("A where filter can compare against a variable")
+    func loopFilterComparesAgainstVariable() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{% for page in pages where locale == site.defaultLocale %}{{ page.title }}{% endfor %}",
+            variables: Variables([
+                "site": .map(["defaultLocale": .string("en")]),
+                "pages": .list([
+                    .map(["title": .string("EN"), "locale": .string("en")]),
+                    .map(["title": .string("FR"), "locale": .string("fr-fr")]),
+                ]),
+            ]),
+            resolver: resolver
+        )
+
+        #expect(result == "EN")
+    }
+
+    @Test("A where filter excludes items with a missing field")
+    func loopFilterExcludesItemsWithMissingField() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{% for page in pages where date == \"2026-01-01\" %}{{ page.title }}{% endfor %}",
+            variables: Variables([
+                "pages": .list([
+                    .map(["title": .string("Dated"), "date": .string("2026-01-01")]),
+                    .map(["title": .string("Undated")]),
+                ]),
+            ]),
+            resolver: resolver
+        )
+
+        #expect(result == "Dated")
+    }
+
+    @Test("A where filter can use a dot-notation field")
+    func loopFilterUsesDotNotationField() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{% for page in pages where meta.section == \"blog\" %}{{ page.title }}{% endfor %}",
+            variables: Variables([
+                "pages": .list([
+                    .map(["title": .string("Post"), "meta": .map(["section": .string("blog")])]),
+                    .map(["title": .string("Page"), "meta": .map(["section": .string("docs")])]),
+                ]),
+            ]),
+            resolver: resolver
+        )
+
+        #expect(result == "Post")
+    }
+
+    @Test("A where filter renders the else branch when nothing matches")
+    func loopFilterRendersElseBranchWhenNothingMatches() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        let result = try engine.render(
+            "{% for page in pages where url startsWith \"/nope/\" %}{{ page.title }}{% else %}none{% endfor %}",
+            variables: Variables([
+                "pages": .list([.map(["title": .string("Home"), "url": .string("/index.html")])]),
+            ]),
+            resolver: resolver
+        )
+
+        #expect(result == "none")
+    }
+
+    @Test("Throws when a where filter value is a missing variable")
+    func loopFilterThrowsOnMissingVariableValue() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        #expect(throws: TemplateError.missingVariable("missing")) {
+            try engine.render(
+                "{% for page in pages where url == missing %}{{ page.title }}{% endfor %}",
+                variables: Variables(["pages": .list([])]),
+                resolver: resolver
+            )
+        }
+    }
+
+    @Test("Throws on an invalid where clause")
+    func loopFilterThrowsOnInvalidClause() throws {
+        let fileSystem = InMemoryFileSystem()
+        let (engine, resolver) = try makeEnvironment(fileSystem: fileSystem)
+
+        #expect(throws: TemplateError.invalidLoop("item in items where url like \"/x/\"")) {
+            try engine.render(
+                "{% for item in items where url like \"/x/\" %}{{ item }}{% endfor %}",
+                variables: Variables(["items": .list([.string("a")])]),
+                resolver: resolver
+            )
+        }
+    }
 }

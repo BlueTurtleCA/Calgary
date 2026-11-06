@@ -72,7 +72,7 @@ public indirect enum Variable: Equatable, Sendable {
 
 /// A context of template variables, supporting dot-notation lookup.
 struct Variables: Equatable, Sendable {
-    private let values: [String: Variable]
+    let values: [String: Variable]
 
     init(_ values: [String: Variable] = [:]) {
         self.values = values

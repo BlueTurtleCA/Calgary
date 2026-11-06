@@ -18,3 +18,12 @@ files that the template includes.
 - `templates/home.html` is the template it renders into.
 - `components/header.html` and `components/footer.html` are included by the template.
 - `components/hero.md` is a markdown component that the page includes.
+
+## Recent posts
+
+The posts below come from the `blog` collection — the same list the blog
+index renders from:
+
+{% for post in site.blog %}
+- [{{ post.title }}]({{ post.url }}) — {{ post.description }}
+{% endfor %}

@@ -79,9 +79,10 @@ Hi, welcome to {{ title }}!
 {% include "components/hero" %}
 ```
 
-- `template` (required) — the template to render the page with.
-- `date` (optional) — exposed as `{{ page.date }}`.
+- `template` — the template to render the page with. Required for markdown pages outside a [collection](#collections); a collection's pages may omit it and use the collection's template.
+- `date` (optional) — exposed as `{{ page.date }}`; sorts a collection's index, newest first.
 - `variables` (optional) — a map of values exposed to the page and its components.
+- **Any other top-level key is a variable** — `title: Hello` renders as `{{ title }}` just like an entry under `variables:` (a top-level key wins over a same-named `variables` entry). This is how a post carries a `description` or `image` that its collection's index can show.
 
 The output path mirrors the source path: `content/blog/post.md` → `build/blog/post.html`.
 
@@ -115,6 +116,7 @@ Markdown components are rendered to HTML first, then pass through the template e
 - `{% include "path" key={{ variable }} %}` — include with a variable argument; the value is resolved from the current context and keeps its type
 - `{% if condition %} … {% else %} … {% endif %}` — conditional; `else` is optional and nesting is supported
 - `{% for item in items %} … {% else %} … {% endfor %}` — loop over a list; the item is available as `{{ item }}` (dot notation for map items), and the optional `else` branch renders when the list is empty
+- `{% for item in items where field operator value %}` — a loop may carry a `where` filter that excludes items whose field does not match; the operator is `==`, `!=`, `startsWith`, `endsWith`, or `contains`, the value is a quoted string, a number, or a variable, and an item with a missing field is excluded
 
 A condition is a bare variable (a truthiness check) or a `==`/`!=` comparison. Operands are quoted strings, numbers, or variables:
 
@@ -130,7 +132,7 @@ A bare variable is an existence check: a missing variable is false. In a compari
 
 Built-in variables: `site.name`, `site.year` (the current year, computed at build time), `page.url`, and `page.date` (when declared). When the site is created with a `baseUrl`, pages also get `page.canonical` — the page's absolute URL, ready to paste into `<link rel="canonical">`. When the site is localized, pages also get `page.locale`, `site.defaultLocale`, and `page.alternates` (see [Localization](#localization)). Variables from a page's frontmatter override built-ins.
 
-`site.pages` is a list of the site's pages, each with `title`, `url`, `locale`, and (when declared) `date`. A page's `title` is its `title` frontmatter variable, falling back to the file name. Use it with `{% for %}` to build listing pages and navigation:
+`site.pages` is a list of the site's pages, each with the page's frontmatter variables plus `title`, `url`, `locale`, and (when declared) `date`. A page's `title` is its `title` frontmatter variable, falling back to the file name. Use it with `{% for %}` to build listing pages and navigation:
 
 ```html
 {% for page in site.pages %}
@@ -148,6 +150,25 @@ let site = Site(
 ```
 
 `{{ site.year }}` then renders `2026` on every page. Values are `Variable`s — strings, numbers, booleans, lists, or nested maps — so computed or fetched values (a year, a scraped headline) can flow straight into templates.
+
+## Collections
+
+A collection is a directory of pages that share a template and get a generated index, optionally paginated — a blog, a gallery, a docs section. Declare it in the pipeline:
+
+```swift
+let site = Site(name: "My Site", source: "content", output: "build")
+    .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index", paginate: 2)
+    .registerTemplates(in: "templates")
+    .registerComponents(in: "components")
+    .renderPages()
+```
+
+- The collection's pages (here, `content/blog/*.md`) render like any other page, using the collection's `template` when their frontmatter declares none.
+- After the pages render, the collection's `index` template renders once per page of the collection: `build/blog/index.html` (and `build/blog/page/2/index.html`, … when `paginate:` is set). The index template renders with `items` (the pages on this page), `total`, `count`, `number`, `pageCount`, `hasPrevious`, `hasNext`, and (when present) `previousUrl` and `nextUrl`, plus the usual `site` and `page` built-ins.
+- The collection's pages are exposed to every template as `{{ site.<name> }}` (here, `{{ site.blog }}`), sorted by `date` descending (undated pages last), each entry carrying the page's `title`, `url`, `locale`, `date`, and every frontmatter variable — so the index can show a post's `description` without extra plumbing.
+- A site can have several collections (a blog and a gallery, for example); each is exposed under its own name and renders its index under its own directory. Collection names must be unique and must not collide with a built-in `site` variable.
+- There cannot be a page at the collection's root (`content/blog/index.md`): the generated index owns that path.
+- When the site is localized, a collection lists the default-locale pages only, and a missing translation of a collection page is not warned about.
 
 ## Localization
 
@@ -258,6 +279,7 @@ A `Site` is a list of steps, run in order by `build()` (which first removes and 
 | `registerTemplates(in:)` | Registers the templates directory (required by `renderPages`) |
 | `registerComponents(in:)` | Registers the components directory |
 | `localize(defaultLocale:locales:strings:)` | Configures the site's locales and strings source (YAML directory or `.xcstrings` catalog); translations render under `/<locale>/` |
+| `addCollection(name:source:template:index:paginate:)` | Adds a collection of pages that share a template and get a generated index, optionally paginated; the pages are exposed to templates as `{{ site.<name> }}` |
 | `renderPages(glob:)` | Renders every page matching the glob (default `**/*.md`) into its template |
 | `generateSitemap(baseUrl:)` | Writes `sitemap.xml` of every built page under the base URL (defaulting to the site's `baseUrl`), with a `<lastmod>` per page (frontmatter `date`, falling back to file modification time) and, for localized sites, `hreflang` alternates |
 | `open(_:)` | Opens a built page in the default browser (Apple platforms) |
@@ -286,7 +308,7 @@ Failures surface as `BuildError` (missing paths, failed commands, missing config
 
 ## The sample site
 
-This repo includes a complete sample — the "Blue Turtle Canada" demo — in `Sources/Example/`. It demonstrates the full pipeline, including a Tailwind CSS build via `executeCommand`, a markdown component, and localization (a French translation of the home page).
+This repo includes a complete sample — the "Blue Turtle Canada" demo — in `Sources/Example/`. It demonstrates the full pipeline, including a Tailwind CSS build via `executeCommand`, a markdown component, localization (a French translation of the home page and the blog posts), and a paginated blog collection.
 
 ```sh
 cd Sources/Example && npm install   # once, for the Tailwind CLI

@@ -102,11 +102,48 @@ struct FrontmatterTests {
         }
     }
 
-    @Test("Throws when the template is missing")
-    func throwsWhenTemplateIsMissing() {
-        #expect(throws: FrontmatterError.missingTemplate) {
-            try Frontmatter.parse("---\nvariables:\n  title: Hi\n---\nBody")
-        }
+    @Test("Allows a markdown page without a template")
+    func allowsMarkdownPageWithoutTemplate() throws {
+        // The render step enforces a template (or a collection's default);
+        // the parser does not.
+        let page = try Frontmatter.parse("---\nvariables:\n  title: Hi\n---\nBody")
+
+        #expect(page.template == nil)
+        #expect(page.variables["title"] == .string("Hi"))
+    }
+
+    @Test("Parses top-level keys as variables")
+    func parsesTopLevelKeysAsVariables() throws {
+        let page = try Frontmatter.parse(
+            """
+            ---
+            template: home
+            title: A Post
+            description: A short description.
+            image: /images/post.jpg
+            ---
+            """
+        )
+
+        #expect(page.variables["title"] == .string("A Post"))
+        #expect(page.variables["description"] == .string("A short description."))
+        #expect(page.variables["image"] == .string("/images/post.jpg"))
+    }
+
+    @Test("A top-level key wins over a same-named variables entry")
+    func topLevelKeyWinsOverVariablesEntry() throws {
+        let page = try Frontmatter.parse(
+            """
+            ---
+            template: home
+            title: Top level
+            variables:
+              title: Nested
+            ---
+            """
+        )
+
+        #expect(page.variables["title"] == .string("Top level"))
     }
 
     @Test("Throws when the frontmatter is not a YAML mapping")
