@@ -105,6 +105,7 @@ Hi, welcome to {{ title }}!
 
 - `template` — the template to render the page with. Required for markdown pages outside a collection (a collection's pages may omit it and use the collection's template); the render step enforces it, not the parser.
 - `date` — optional; exposed as `{{ page.date }}` and used to sort collection indexes.
+- `slug` — optional; the page's URL path, relative to its directory. When declared, the page builds to `<slug>/index.html` instead of `<file name>/index.html`, so `slug: 2026-01-05/hello-world` on a post in `content/blog` publishes it at `/blog/2026-01-05/hello-world`. A slug may not contain a parent-directory segment (`..`), and two pages may not build to the same path; either fails the build.
 - **Any other top-level key is a variable**: `title: Hello` renders as `{{ title }}`, just like an entry under `variables:`. A top-level key wins over a same-named `variables` entry. This is how a post carries a `description` or `image` that its collection's index template can show.
 
 ### Collections
@@ -244,11 +245,11 @@ struct Main {
 
 ## Per-page render flow
 
-1. Read the page, split frontmatter (Yams) → `template`, `date`, variables (any top-level key other than `template`/`date`/`variables` is a variable).
+1. Read the page, split frontmatter (Yams) → `template`, `date`, `slug`, variables (any top-level key other than `template`/`date`/`slug`/`variables` is a variable).
 2. Merge variables: built-ins (`site.name`, `site.year` (the current year), `site.pages`, the site's collections under `site.<name>`, `page.url`, `page.date` when declared; `page.canonical` when the site declares a `baseUrl`; `page.locale`, `site.defaultLocale`, `page.alternates` when localized) + the site's `templateVariables` under `site` (overriding built-ins) + frontmatter (frontmatter wins) + the page's locale strings under `strings` (when localized). `site.pages` is a list of every page's frontmatter variables with its `title`, `url`, `locale`, and (when declared) `date` layered on top, built once before any page renders; a collection's `site.<name>` list is the same shape, restricted to the collection's default-locale pages and sorted by `date` descending.
 3. Evaluate `{% for %}` loops (including `where` filters) and `{% if %}` conditionals, then resolve `{% include %}`s recursively. Markdown components render to HTML first, then pass through the template engine (so components can nest and use variables). Cycle detection via a resolution stack.
 4. Render remaining markdown → HTML via swift-markdown, with smart punctuation disabled so quotes and template tags pass through literally.
-5. Inject as `{{ content }}` into the template, interpolate, write output. Path mirrors source: `blog/post.md` → `build/blog/post.html`. A markdown page renders with its declared `template`, falling back to the template of the collection it belongs to; a page with neither fails the build.
+5. Inject as `{{ content }}` into the template, interpolate, write output. The page's URL path is its directory plus its slug (or its file name, without extension and locale suffix, when no `slug` is declared), with a trailing `index` component dropped, and it builds to `<url path>/index.html` — so `blog/post.md` builds to `build/blog/post/index.html` and is served at `/blog/post` (a page named `index` is its directory's index, at `/blog`). A markdown page renders with its declared `template`, falling back to the template of the collection it belongs to; a page with neither fails the build.
 6. When localized, a default-locale HTML page is re-rendered for every declared locale that has no explicit translation file (output under `/<locale>/`); a default-locale markdown page with a missing translation produces a warning instead — except for collection pages, whose translations are optional.
 7. After every page renders, each collection's index template renders once per page of the collection (`<source>/index.html`, `<source>/page/2/index.html`, …), with `items`, `total`, `count`, `number`, `pageCount`, `hasPrevious`, `hasNext`, and (when present) `previousUrl`/`nextUrl`.
 

@@ -72,6 +72,33 @@ struct FrontmatterTests {
         #expect(page.date == "2026-01-01")
     }
 
+    @Test("Parses the slug")
+    func parsesSlug() throws {
+        let page = try Frontmatter.parse(
+            """
+            ---
+            template: home
+            slug: 2026-01-05/hello-world
+            ---
+            """
+        )
+
+        #expect(page.slug == "2026-01-05/hello-world")
+    }
+
+    @Test("Leaves the slug nil when it is not declared")
+    func slugIsNilWhenNotDeclared() throws {
+        let page = try Frontmatter.parse(
+            """
+            ---
+            template: home
+            ---
+            """
+        )
+
+        #expect(page.slug == nil)
+    }
+
     @Test("Allows a page without variables")
     func allowsPageWithoutVariables() throws {
         let page = try Frontmatter.parse(

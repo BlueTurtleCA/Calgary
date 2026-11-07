@@ -10,6 +10,13 @@ struct Page: Equatable {
     let template: String?
     /// The page's date, if declared in the frontmatter.
     let date: String?
+    /// The page's slug, if declared in the frontmatter.
+    ///
+    /// The slug is the page's URL path relative to its directory, so a post
+    /// in `content/blog` with `slug: 2026-01-05/hello-world` is published
+    /// at `/blog/2026-01-05/hello-world`. When `nil`, the page's file name
+    /// (without its extension and locale suffix) is used.
+    let slug: String?
     /// Variables declared in the frontmatter.
     let variables: Variables
     /// The page's body.
@@ -68,7 +75,7 @@ enum Frontmatter {
     static func parseHTML(_ text: String) throws -> Page {
         let lines = text.components(separatedBy: "\n")
         guard let first = lines.first, first.trimmingCharacters(in: .whitespaces) == "---" else {
-            return Page(template: nil, date: nil, variables: Variables([:]), body: text)
+            return Page(template: nil, date: nil, slug: nil, variables: Variables([:]), body: text)
         }
         let (yaml, body) = try split(text)
         let page = try page(fromYAML: yaml, body: body)
@@ -82,6 +89,7 @@ enum Frontmatter {
     private static func page(fromYAML yaml: String, body: String) throws -> Page {
         var template: String?
         var date: String?
+        var slug: String?
         var variables: [String: Variable] = [:]
         var topLevel: [String: Variable] = [:]
 
@@ -104,6 +112,10 @@ enum Frontmatter {
                     if case .scalar(let valueScalar) = value {
                         date = valueScalar.string
                     }
+                case "slug":
+                    if case .scalar(let valueScalar) = value {
+                        slug = valueScalar.string
+                    }
                 case "variables":
                     let variable = try variable(from: value)
                     if case .map(let map) = variable {
@@ -122,7 +134,7 @@ enum Frontmatter {
             variables[key] = value
         }
 
-        return Page(template: template, date: date, variables: Variables(variables), body: body)
+        return Page(template: template, date: date, slug: slug, variables: Variables(variables), body: body)
     }
 
     /// Splits `text` into its YAML frontmatter and body.

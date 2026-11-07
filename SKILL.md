@@ -112,9 +112,10 @@ Hi, welcome to {{ title }}!
 
 - `template` — selects the template by name (`home` → `templates/home.html`). Required for markdown pages outside a collection; a collection's pages may omit it and use the collection's template.
 - `date` (optional) — exposed as `{{ page.date }}`; sorts a collection's index, newest first.
+- `slug` (optional) — the page's URL path, relative to its directory. When declared, the page builds to `<slug>/index.html` instead of `<file name>/index.html`, so `slug: 2026-01-05/hello-world` on a post in `content/blog` publishes it at `/blog/2026-01-05/hello-world`. A slug may not contain a parent-directory segment (`..`), and two pages may not build to the same path; either fails the build.
 - `variables` (optional) — values exposed to the page and its components.
 - **Any other top-level key is a variable** — `title: Hello` renders as `{{ title }}` just like an entry under `variables:` (a top-level key wins over a same-named `variables` entry). This is how a post carries a `description` or `image` that its collection's index can show.
-- The output path mirrors the source path: `content/blog/post.md` → `build/blog/post.html`.
+- A page's URL is clean — no `.html`, no trailing slash: `content/blog/post.md` builds to `build/blog/post/index.html` and is served at `/blog/post` (a page named `index` is its directory's index, at `/blog`).
 
 ### Template — `templates/home.html`
 

@@ -152,7 +152,14 @@ struct SitemapStep: BuildStep {
             path = String(path.dropFirst(first.count + 1))
             localeSuffix = "." + first
         }
-        let base = path.hasSuffix(".html") ? String(path.dropLast(".html".count)) : path
+        // Strip the trailing /index (from index.html) and the .html, so
+        // blog/post/index.html maps to the base blog/post.
+        var base = path
+        if base.hasSuffix("/index.html") {
+            base = String(base.dropLast("/index.html".count))
+        } else if base.hasSuffix(".html") {
+            base = String(base.dropLast(".html".count))
+        }
 
         var candidates = [base + localeSuffix + ".md", base + localeSuffix + ".html"]
         if !localeSuffix.isEmpty {
@@ -225,13 +232,16 @@ struct SitemapStep: BuildStep {
         {
             path = String(path.dropFirst(first.count + 1))
         }
-        let base = path.hasSuffix(".html") ? String(path.dropLast(".html".count)) : path
+        // The page's default-locale URL path, from its output path.
+        let base = PageURL.path(for: path)
 
         var alternates: [(locale: String, url: String)] = []
         var defaultURL: String?
         for locale in localization.locales {
-            let relativeURL = PageURL.relative(forBase: base, in: locale, defaultLocale: localization.defaultLocale)
-            let outputPath = String(relativeURL.dropFirst())
+            let urlPath = locale == localization.defaultLocale
+                ? base
+                : (base.isEmpty ? locale : locale + "/" + base)
+            let outputPath = PageURL.outputPath(forURLPath: urlPath)
             guard fileSystem.fileExists(atPath: outputDirectory.appendingPathComponent(outputPath).path) else {
                 continue
             }

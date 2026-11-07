@@ -71,6 +71,7 @@ struct RenderPagesStep: BuildStep {
         // {{ site.<name> }} while it renders.
         let pagesVariable = try Self.pageCollection(for: pages, site: site)
         try Self.validate(site.collections)
+        try Self.validateOutputPaths(for: pages, site: site)
         let collections = try Self.collectionData(for: site.collections, pages: pages, site: site)
         let collectionsVariable: [String: Variable] = Dictionary(
             uniqueKeysWithValues: collections.map { ($0.collection.name, Variable.list($0.entries)) }
@@ -129,14 +130,15 @@ struct RenderPagesStep: BuildStep {
         let relative = site.fileSystem.relativePath(of: pageURL, to: site.sourceDirectory)
         let locale = localeOverride ?? Self.locale(of: relative, in: site.localization)
         let defaultLocale = site.localization?.defaultLocale ?? "default"
-        let outputRelative = Self.outputPath(for: relative, locale: locale, defaultLocale: defaultLocale)
+        let urlPath = Self.urlPath(for: relative, slug: page.slug, locale: locale, defaultLocale: defaultLocale)
+        let outputRelative = PageURL.outputPath(forURLPath: urlPath)
 
         var variables = builtInVariables(
             for: site,
             page: page,
             locale: locale,
             defaultLocale: defaultLocale,
-            outputRelative: outputRelative,
+            urlPath: urlPath,
             sourceRelative: relative,
             pagesVariable: pagesVariable,
             collectionsVariable: collectionsVariable
@@ -222,20 +224,20 @@ struct RenderPagesStep: BuildStep {
         page: Page,
         locale: String,
         defaultLocale: String,
-        outputRelative: String,
+        urlPath: String,
         sourceRelative: String,
         pagesVariable: Variable,
         collectionsVariable: [String: Variable]
     ) -> Variables {
-        var pageValues: [String: Variable] = ["url": .string("/" + outputRelative)]
+        var pageValues: [String: Variable] = ["url": .string(PageURL.url(forURLPath: urlPath))]
         if let date = page.date {
             pageValues["date"] = .string(date)
         }
         if let baseUrl = site.baseUrl {
-            pageValues["canonical"] = .string(PageURL.absolute(for: outputRelative, baseUrl: baseUrl))
+            pageValues["canonical"] = .string(PageURL.absolute(forURLPath: urlPath, baseUrl: baseUrl))
         }
 
-        var variables = siteVariables(
+        let variables = siteVariables(
             for: site,
             pagesVariable: pagesVariable,
             collectionsVariable: collectionsVariable
@@ -345,33 +347,58 @@ struct RenderPagesStep: BuildStep {
         return false
     }
 
-    /// The output path, relative to the output directory, for a page.
+    /// The page's file name without its extension and locale suffix:
+    /// `blog/hello-world.fr-fr.md` and `blog/hello-world.md` both become
+    /// `hello-world`.
+    private static func fileNameBase(of relative: String, locale: String, defaultLocale: String) -> String {
+        var name = relative.split(separator: "/").last.map(String.init) ?? relative
+        name = Self.baseName(of: name)
+        if locale != defaultLocale, name.hasSuffix("." + locale) {
+            name = String(name.dropLast(locale.count + 1))
+        }
+        return name
+    }
+
+    /// The page's URL path in the default locale: its directory plus its slug,
+    /// with a trailing `index` component dropped, so a page named `index` is
+    /// its directory's index.
     ///
-    /// Default-locale pages mirror their source path: `blog/post.md` becomes
-    /// `blog/post.html`, and `about.html` stays `about.html`. Translations
-    /// are written under a subfolder named after the locale, with the locale
-    /// suffix removed: `blog/post.fr-fr.md` becomes `fr-fr/blog/post.html`.
-    /// A page rendered for a locale it does not carry in its file name (a
-    /// default-locale HTML page rendered for every declared locale) is also
-    /// written under the locale subfolder: `about.html` rendered for `fr-fr`
-    /// becomes `fr-fr/about.html`.
-    private static func outputPath(for relative: String, locale: String, defaultLocale: String) -> String {
-        if locale != defaultLocale {
-            for ext in [".md", ".html"] {
-                let suffix = "." + locale + ext
-                if relative.hasSuffix(suffix) {
-                    return locale + "/" + String(relative.dropLast(suffix.count)) + ".html"
-                }
-            }
-            let htmlName = relative.hasSuffix(".md")
-                ? String(relative.dropLast(3)) + ".html"
-                : relative
-            return locale + "/" + htmlName
+    /// The slug is the page's `slug:` frontmatter value, or its file name
+    /// (without extension and locale suffix) when none is declared. It is
+    /// relative to the page's directory, so a post in `content/blog` with
+    /// `slug: 2026-01-05/hello-world` has the URL path
+    /// `blog/2026-01-05/hello-world`.
+    private static func defaultURLPath(for relative: String, slug: String?, locale: String, defaultLocale: String) -> String {
+        let directory: String
+        if let slashIndex = relative.lastIndex(of: "/") {
+            directory = String(relative[..<slashIndex])
+        } else {
+            directory = ""
         }
-        if relative.hasSuffix(".md") {
-            return String(relative.dropLast(3)) + ".html"
+        let base = Self.fileNameBase(of: relative, locale: locale, defaultLocale: defaultLocale)
+        let effectiveSlug = slug ?? base
+        var path = directory.isEmpty ? effectiveSlug : directory + "/" + effectiveSlug
+        if path.split(separator: "/").last.map(String.init) == "index" {
+            path = path.lastIndex(of: "/").map { String(path[..<$0]) } ?? ""
         }
-        return relative
+        return path
+    }
+
+    /// The page's URL path in a locale: the default-locale URL path, prefixed
+    /// with the locale when it is not the default, so `blog/hello-world` in
+    /// `fr-fr` is `fr-fr/blog/hello-world`.
+    private static func urlPath(for relative: String, slug: String?, locale: String, defaultLocale: String) -> String {
+        let defaultPath = Self.defaultURLPath(for: relative, slug: slug, locale: locale, defaultLocale: defaultLocale)
+        guard locale != defaultLocale else { return defaultPath }
+        return defaultPath.isEmpty ? locale : locale + "/" + defaultPath
+    }
+
+    /// The output file path, relative to the output directory, for a page:
+    /// `index.html` for the root, otherwise `<url path>/index.html`. So
+    /// `blog/post.md` becomes `blog/post/index.html`, and
+    /// `blog/post.fr-fr.md` becomes `fr-fr/blog/post/index.html`.
+    private static func outputPath(for relative: String, slug: String?, locale: String, defaultLocale: String) -> String {
+        PageURL.outputPath(forURLPath: Self.urlPath(for: relative, slug: slug, locale: locale, defaultLocale: defaultLocale))
     }
 
     /// Builds the `<link rel="alternate" hreflang="…">` tags for a page: one
@@ -411,7 +438,7 @@ struct RenderPagesStep: BuildStep {
             } else {
                 sourceFiles = [base + "." + alternate + ".md", base + "." + alternate + ".html"]
             }
-            let url = PageURL.relative(forBase: base, in: alternate, defaultLocale: defaultLocale)
+            let url = Self.alternateURL(forBase: base, in: alternate, defaultLocale: defaultLocale, site: site)
             let hasExplicitFile = sourceFiles.contains(where: {
                 site.fileSystem.fileExists(
                     atPath: site.sourceDirectory.appendingPathComponent($0).path
@@ -427,6 +454,38 @@ struct RenderPagesStep: BuildStep {
             links.append("<link rel=\"alternate\" hreflang=\"x-default\" href=\"\(defaultURL)\">")
         }
         return links.joined(separator: "\n")
+    }
+
+    /// The URL of a page's base in a locale, accounting for the slug declared
+    /// in that locale's source file. An explicit translation is preferred,
+    /// then the default-locale file (a default-locale HTML page renders for
+    /// every declared locale).
+    private static func alternateURL(
+        forBase base: String,
+        in locale: String,
+        defaultLocale: String,
+        site: Site
+    ) -> String {
+        let sourceFiles: [String]
+        if locale == defaultLocale {
+            sourceFiles = [base + ".md", base + ".html"]
+        } else {
+            sourceFiles = [base + "." + locale + ".md", base + "." + locale + ".html", base + ".md", base + ".html"]
+        }
+        for fileName in sourceFiles {
+            let url = site.sourceDirectory.appendingPathComponent(fileName)
+            guard site.fileSystem.fileExists(atPath: url.path) else { continue }
+            let data = (try? site.fileSystem.read(contentsOf: url)) ?? Data()
+            let text = String(data: data, encoding: .utf8) ?? ""
+            let page = fileName.hasSuffix(".html")
+                ? (try? Frontmatter.parseHTML(text))
+                : (try? Frontmatter.parse(text))
+            let urlPath = Self.urlPath(for: fileName, slug: page?.slug, locale: locale, defaultLocale: defaultLocale)
+            return PageURL.url(forURLPath: urlPath)
+        }
+        // No source file found: fall back to the file-name slug.
+        let urlPath = Self.urlPath(for: base + ".md", slug: nil, locale: locale, defaultLocale: defaultLocale)
+        return PageURL.url(forURLPath: urlPath)
     }
 
     // MARK: Strings
@@ -499,13 +558,13 @@ struct RenderPagesStep: BuildStep {
     private static func entry(for page: Page, relative: String, site: Site) -> [String: Variable] {
         let defaultLocale = site.localization?.defaultLocale ?? "default"
         let locale = Self.locale(of: relative, in: site.localization)
-        let outputRelative = Self.outputPath(for: relative, locale: locale, defaultLocale: defaultLocale)
+        let urlPath = Self.urlPath(for: relative, slug: page.slug, locale: locale, defaultLocale: defaultLocale)
         var entry: [String: Variable] = page.variables.values
         entry["title"] = .string(
             page.variables["title"]?.stringValue
                 ?? Self.fallbackTitle(for: relative, locale: locale, defaultLocale: defaultLocale)
         )
-        entry["url"] = .string("/" + outputRelative)
+        entry["url"] = .string(PageURL.url(forURLPath: urlPath))
         entry["locale"] = .string(locale)
         if let date = page.date {
             entry["date"] = .string(date)
@@ -516,12 +575,7 @@ struct RenderPagesStep: BuildStep {
     /// A page's title when its frontmatter declares none: the file name
     /// without its extension and locale suffix.
     private static func fallbackTitle(for relative: String, locale: String, defaultLocale: String) -> String {
-        var name = relative.split(separator: "/").last.map(String.init) ?? relative
-        name = Self.baseName(of: name)
-        if locale != defaultLocale, name.hasSuffix("." + locale) {
-            name = String(name.dropLast(locale.count + 1))
-        }
-        return name
+        Self.fileNameBase(of: relative, locale: locale, defaultLocale: defaultLocale)
     }
 
     // MARK: Collections
@@ -554,6 +608,40 @@ struct RenderPagesStep: BuildStep {
                     "collection '\(collection.name)' paginates by \(paginate); the page size must be at least 1"
                 )
             }
+        }
+    }
+
+    /// Validates the pages' output paths: a declared slug must not be empty,
+    /// malformed, or contain a `..` segment, and two pages must not build to
+    /// the same file.
+    private static func validateOutputPaths(for pages: [URL], site: Site) throws {
+        let fileSystem = site.fileSystem
+        let defaultLocale = site.localization?.defaultLocale ?? "default"
+        var seen: [String: String] = [:]
+        for pageURL in pages {
+            let relative = fileSystem.relativePath(of: pageURL, to: site.sourceDirectory)
+            let page = try parsedPage(at: pageURL, fileSystem: fileSystem)
+            if let slug = page.slug {
+                let segments = slug.components(separatedBy: "/")
+                if segments.contains("..") {
+                    throw BuildError.missingConfiguration(
+                        "the slug '\(slug)' in '\(relative)' must not contain '..'"
+                    )
+                }
+                if segments.contains(where: { $0.isEmpty }) {
+                    throw BuildError.missingConfiguration(
+                        "the slug '\(slug)' in '\(relative)' is empty or malformed"
+                    )
+                }
+            }
+            let locale = Self.locale(of: relative, in: site.localization)
+            let outputRelative = Self.outputPath(for: relative, slug: page.slug, locale: locale, defaultLocale: defaultLocale)
+            if let existing = seen[outputRelative] {
+                throw BuildError.missingConfiguration(
+                    "'\(relative)' and '\(existing)' both build to '\(outputRelative)'"
+                )
+            }
+            seen[outputRelative] = relative
         }
     }
 

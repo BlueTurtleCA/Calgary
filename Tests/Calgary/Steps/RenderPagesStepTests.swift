@@ -93,8 +93,124 @@ struct RenderPagesStepTests {
 
         try site.build()
 
-        #expect(try readFile(at: "build/blog/post.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        #expect(try readFile(at: "build/blog/post/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
         #expect(try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+    }
+
+    @Test("Publishes a page at its slug")
+    func publishesAPageAtItsSlug() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            """
+            ---
+            template: home
+            slug: hello-world
+            variables:
+              title: A Post
+            ---
+
+            {{ page.url }}
+            """,
+            at: "content/blog/post.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        // The page builds to the slug's path, not the file name's.
+        #expect(try readFile(at: "build/blog/hello-world/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        #expect(try readFile(at: "build/blog/post/index.html", relativeTo: virtualRoot, in: fileSystem) == nil)
+
+        let output = try readFile(at: "build/blog/hello-world/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("/blog/hello-world") == true)
+    }
+
+    @Test("A slug may nest the page under a subpath")
+    func slugMayNestThePageUnderASubpath() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            """
+            ---
+            template: home
+            slug: 2026-01-05/hello-world
+            variables:
+              title: A Post
+            ---
+
+            {{ page.url }}
+            """,
+            at: "content/blog/post.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        #expect(try readFile(at: "build/blog/2026-01-05/hello-world/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+
+        let output = try readFile(at: "build/blog/2026-01-05/hello-world/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("/blog/2026-01-05/hello-world") == true)
+    }
+
+    @Test("Fails when two pages build to the same path")
+    func failsWhenTwoPagesBuildToTheSamePath() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            "---\ntemplate: home\nslug: shared\ntitle: One\n---\n\nOne.",
+            at: "content/blog/one.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "---\ntemplate: home\nslug: shared\ntitle: Two\n---\n\nTwo.",
+            at: "content/blog/two.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        #expect(throws: BuildError.self) {
+            try site.build()
+        }
+    }
+
+    @Test("Fails when a slug contains a parent-directory segment")
+    func failsWhenASlugContainsAParentDirectorySegment() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        try writeFile(
+            "---\ntemplate: home\nslug: ../escape\ntitle: Escaping\n---\n\nBody.",
+            at: "content/blog/post.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        #expect(throws: BuildError.self) {
+            try site.build()
+        }
     }
 
     @Test("Exposes the built-in variables")
@@ -124,8 +240,8 @@ struct RenderPagesStepTests {
 
         try site.build()
 
-        let output = try readFile(at: "build/dated.html", relativeTo: virtualRoot, in: fileSystem)
-        #expect(output?.contains("/dated.html / 2026-01-01") == true)
+        let output = try readFile(at: "build/dated/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("/dated / 2026-01-01") == true)
     }
 
     @Test("Exposes the current year as site.year")
@@ -155,7 +271,7 @@ struct RenderPagesStepTests {
         try site.build()
 
         let year = Calendar.current.component(.year, from: .now)
-        let output = try readFile(at: "build/year.html", relativeTo: virtualRoot, in: fileSystem)
+        let output = try readFile(at: "build/year/index.html", relativeTo: virtualRoot, in: fileSystem)
         #expect(output?.contains("<p>\(year)</p>") == true)
     }
 
@@ -205,8 +321,8 @@ struct RenderPagesStepTests {
         let index = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
         #expect(index?.contains("<link rel=\"canonical\" href=\"https://example.com/\">") == true)
 
-        let post = try readFile(at: "build/blog/post.html", relativeTo: virtualRoot, in: fileSystem)
-        #expect(post?.contains("<link rel=\"canonical\" href=\"https://example.com/blog/post.html\">") == true)
+        let post = try readFile(at: "build/blog/post/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(post?.contains("<link rel=\"canonical\" href=\"https://example.com/blog/post\">") == true)
     }
 
     @Test("Does not expose page.canonical when the site has no base URL")
@@ -268,7 +384,7 @@ struct RenderPagesStepTests {
 
         try site.build()
 
-        let output = try readFile(at: "build/vars.html", relativeTo: virtualRoot, in: fileSystem)
+        let output = try readFile(at: "build/vars/index.html", relativeTo: virtualRoot, in: fileSystem)
         #expect(output?.contains("<p>2026</p>") == true)
     }
 
@@ -405,7 +521,7 @@ struct RenderPagesStepTests {
 
         try site.build()
 
-        let output = try readFile(at: "build/hero-page.html", relativeTo: virtualRoot, in: fileSystem)
+        let output = try readFile(at: "build/hero-page/index.html", relativeTo: virtualRoot, in: fileSystem)
         #expect(output?.contains("<h2>Hello</h2>") == true)
         #expect(output?.contains("<p>A calm corner of the web.</p>") == true)
     }
@@ -437,7 +553,7 @@ struct RenderPagesStepTests {
         try site.build()
 
         #expect(try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
-        #expect(try readFile(at: "build/nested/page.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        #expect(try readFile(at: "build/nested/page/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
     }
 
     @Test("Renders an HTML page standalone, without markdown or a template")
@@ -499,8 +615,8 @@ struct RenderPagesStepTests {
 
         try site.build()
 
-        #expect(try readFile(at: "build/nested/page.html", relativeTo: virtualRoot, in: fileSystem) != nil)
-        #expect(try readFile(at: "build/nested/page.html.html", relativeTo: virtualRoot, in: fileSystem) == nil)
+        #expect(try readFile(at: "build/nested/page/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        #expect(try readFile(at: "build/nested/page.html", relativeTo: virtualRoot, in: fileSystem) == nil)
     }
 
     @Test("Throws when an HTML page declares a template")
@@ -686,10 +802,10 @@ struct RenderPagesStepTests {
         try site.build()
 
         let output = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
-        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"en\" href=\"/index.html\">") == true)
-        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"fr-fr\" href=\"/fr-fr/index.html\">") == true)
-        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"de\" href=\"/de/index.html\">") == true)
-        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"x-default\" href=\"/index.html\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"en\" href=\"/\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"fr-fr\" href=\"/fr-fr\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"de\" href=\"/de\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"x-default\" href=\"/\">") == true)
 
         #expect(try readFile(at: "build/fr-fr/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
         #expect(try readFile(at: "build/de/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
@@ -721,7 +837,7 @@ struct RenderPagesStepTests {
 
         try site.build()
 
-        #expect(try readFile(at: "build/index.fr-fr.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        #expect(try readFile(at: "build/index.fr-fr/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
         #expect(try readFile(at: "build/fr-fr/index.html", relativeTo: virtualRoot, in: fileSystem) == nil)
     }
 
@@ -753,7 +869,7 @@ struct RenderPagesStepTests {
         try site.build()
 
         let output = try readFile(at: "build/fr-fr/index.html", relativeTo: virtualRoot, in: fileSystem)
-        #expect(output?.contains("fr-fr / en / /fr-fr/index.html") == true)
+        #expect(output?.contains("fr-fr / en / /fr-fr") == true)
     }
 
     @Test("Emits hreflang alternates only for locales that have the page")
@@ -800,9 +916,9 @@ struct RenderPagesStepTests {
 
         let output = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
         #expect(output != nil)
-        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"en\" href=\"/index.html\">") == true)
-        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"fr-fr\" href=\"/fr-fr/index.html\">") == true)
-        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"x-default\" href=\"/index.html\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"en\" href=\"/\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"fr-fr\" href=\"/fr-fr\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"x-default\" href=\"/\">") == true)
         #expect(output?.contains("hreflang=\"de\"") == false)
     }
 
@@ -829,9 +945,9 @@ struct RenderPagesStepTests {
         try site.build()
 
         let output = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
-        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"en\" href=\"/index.html\">") == true)
-        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"fr-fr\" href=\"/fr-fr/index.html\">") == true)
-        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"x-default\" href=\"/index.html\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"en\" href=\"/\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"fr-fr\" href=\"/fr-fr\">") == true)
+        #expect(output?.contains("<link rel=\"alternate\" hreflang=\"x-default\" href=\"/\">") == true)
     }
 
     @Test("Resolves localized strings with fallback to the default locale")
@@ -1091,9 +1207,9 @@ struct RenderPagesStepTests {
 
         try site.build()
 
-        let output = try readFile(at: "build/about.html", relativeTo: virtualRoot, in: fileSystem)
-        #expect(output?.contains("<a href=\"/index.html\">Hello</a>") == true)
-        #expect(output?.contains("<a href=\"/about.html\">About</a>") == true)
+        let output = try readFile(at: "build/about/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("<a href=\"/\">Hello</a>") == true)
+        #expect(output?.contains("<a href=\"/about\">About</a>") == true)
     }
 
     @Test("site.pages includes a page's date when declared")
@@ -1123,7 +1239,7 @@ struct RenderPagesStepTests {
 
         try site.build()
 
-        let output = try readFile(at: "build/dated.html", relativeTo: virtualRoot, in: fileSystem)
+        let output = try readFile(at: "build/dated/index.html", relativeTo: virtualRoot, in: fileSystem)
         #expect(output?.contains("2026-02-01") == true)
     }
 
@@ -1161,7 +1277,7 @@ struct RenderPagesStepTests {
 
         try site.build()
 
-        let output = try readFile(at: "build/list.html", relativeTo: virtualRoot, in: fileSystem)
+        let output = try readFile(at: "build/list/index.html", relativeTo: virtualRoot, in: fileSystem)
         #expect(output?.contains("untitled") == true)
     }
 
@@ -1209,7 +1325,7 @@ struct RenderPagesStepTests {
             description: A short description.
             ---
 
-            {% for page in site.pages where url == "/post.html" %}{{ page.description }}{% endfor %}
+            {% for page in site.pages where url == "/post" %}{{ page.description }}{% endfor %}
             """,
             at: "content/post.md",
             relativeTo: virtualRoot,
@@ -1223,7 +1339,7 @@ struct RenderPagesStepTests {
 
         try site.build()
 
-        let output = try readFile(at: "build/post.html", relativeTo: virtualRoot, in: fileSystem)
+        let output = try readFile(at: "build/post/index.html", relativeTo: virtualRoot, in: fileSystem)
         #expect(output?.contains("A short description.") == true)
     }
 
@@ -1270,7 +1386,7 @@ struct RenderPagesStepTests {
 
         try site.build()
 
-        let post = try readFile(at: "build/blog/first.html", relativeTo: virtualRoot, in: fileSystem)
+        let post = try readFile(at: "build/blog/first/index.html", relativeTo: virtualRoot, in: fileSystem)
         #expect(post?.contains("<title>First</title>") == true)
         #expect(post?.contains("<p>First.</p>") == true)
     }
@@ -1299,7 +1415,7 @@ struct RenderPagesStepTests {
 
         try site.build()
 
-        let output = try readFile(at: "build/blog/custom.html", relativeTo: virtualRoot, in: fileSystem)
+        let output = try readFile(at: "build/blog/custom/index.html", relativeTo: virtualRoot, in: fileSystem)
         #expect(output?.contains("custom") == true)
     }
 
@@ -1362,7 +1478,7 @@ struct RenderPagesStepTests {
         let index = try readFile(at: "build/blog/index.html", relativeTo: virtualRoot, in: fileSystem)
         // Newest first: Second (2026-01-02) before First (2026-01-01).
         #expect(
-            index?.contains("<a href=\"/blog/second.html\">Second</a><a href=\"/blog/first.html\">First</a>") == true
+            index?.contains("<a href=\"/blog/second\">Second</a><a href=\"/blog/first\">First</a>") == true
         )
     }
 
@@ -1400,12 +1516,12 @@ struct RenderPagesStepTests {
         // oldest.
         let page1 = try readFile(at: "build/blog/index.html", relativeTo: virtualRoot, in: fileSystem)
         #expect(page1?.contains("ThirdSecond") == true)
-        #expect(page1?.contains("next:/blog/page/2/") == true)
+        #expect(page1?.contains("next:/blog/page/2") == true)
         #expect(page1?.contains("prev:") == false)
 
         let page2 = try readFile(at: "build/blog/page/2/index.html", relativeTo: virtualRoot, in: fileSystem)
         #expect(page2?.contains("First") == true)
-        #expect(page2?.contains("prev:/blog/") == true)
+        #expect(page2?.contains("prev:/blog") == true)
         #expect(page2?.contains("next:") == false)
 
         #expect(try readFile(at: "build/blog/page/3/index.html", relativeTo: virtualRoot, in: fileSystem) == nil)
@@ -1562,11 +1678,11 @@ struct RenderPagesStepTests {
         try site.build()
 
         // The translation renders as an ordinary page…
-        #expect(try readFile(at: "build/fr-fr/blog/first.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        #expect(try readFile(at: "build/fr-fr/blog/first/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
         // …but the collection lists the default-locale page only, and the
         // missing translation is not warned about.
         let index = try readFile(at: "build/blog/index.html", relativeTo: virtualRoot, in: fileSystem)
-        #expect(index?.contains("/blog/first.html") == true)
+        #expect(index?.contains("/blog/first") == true)
         #expect(index?.contains("fr-fr") == false)
         #expect(site.warnings.isEmpty)
     }
