@@ -334,3 +334,7 @@ Xcode's run button works too: when a command is missing from the minimal `PATH` 
 - **No full template engine.** Interpolation, includes, conditionals, and loops are a small custom engine.
 - **Smart punctuation is disabled** when rendering markdown, so quotes and template tags pass through literally.
 - **No config file.** If it isn't in the pipeline file, it isn't part of the build.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
