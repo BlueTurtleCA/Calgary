@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// RenderPagesStep.swift
+//
+
 import Foundation
 
 /// A build step that renders pages into HTML.

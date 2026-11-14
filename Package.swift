@@ -1,4 +1,12 @@
 // swift-tools-version: 6.4
+
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// Package.swift
+//
+
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription

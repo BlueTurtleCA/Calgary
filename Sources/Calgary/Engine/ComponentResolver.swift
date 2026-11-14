@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// ComponentResolver.swift
+//
+
 import Foundation
 
 /// Resolves `{% include %}` paths to component content.

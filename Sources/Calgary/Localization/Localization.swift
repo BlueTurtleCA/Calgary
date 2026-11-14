@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// Localization.swift
+//
+
 /// The site's localization configuration, set with `Site.localize`.
 struct Localization: Sendable {
     /// The site's default (fallback) locale, for example `"en"`.

@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// Glob.swift
+//
+
 import Foundation
 
 /// Glob matching for file paths, shared by the steps that filter files

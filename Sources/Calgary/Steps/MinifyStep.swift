@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// MinifyStep.swift
+//
+
 import Foundation
 
 /// A build step that minifies the site's output.

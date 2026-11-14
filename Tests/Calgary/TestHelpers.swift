@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// TestHelpers.swift
+//
+
 import Calgary
 import Foundation
 

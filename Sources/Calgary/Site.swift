@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// Site.swift
+//
+
 import Foundation
 
 /// A collection of pages that share a template and get a generated index,

@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// SitemapStep.swift
+//
+
 import Foundation
 
 /// A build step that writes a `sitemap.xml` of the site's pages to the

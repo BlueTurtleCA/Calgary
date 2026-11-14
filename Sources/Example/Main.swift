@@ -1,8 +1,8 @@
 //
-//  Main.swift
-//  Calgary
-//
-//  Created by Blue Turtle on 10/13/26.
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// Main.swift
 //
 
 import Calgary

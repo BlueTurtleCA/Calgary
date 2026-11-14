@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// Variables.swift
+//
+
 import Foundation
 
 /// A single template variable value.

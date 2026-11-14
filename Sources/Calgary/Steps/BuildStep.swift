@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// BuildStep.swift
+//
+
 import Foundation
 
 /// A single unit of work in a site build.

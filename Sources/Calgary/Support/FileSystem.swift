@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// FileSystem.swift
+//
+
 import Foundation
 
 /// Abstraction over the file-system operations Calgary's build steps need.

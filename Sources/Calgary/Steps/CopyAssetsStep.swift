@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// CopyAssetsStep.swift
+//
+
 import Foundation
 
 /// A build step that copies the contents of an assets directory into the

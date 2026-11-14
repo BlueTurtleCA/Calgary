@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// FileWatcher.swift
+//
+
 import Foundation
 #if os(macOS) || os(iOS)
 import CoreServices

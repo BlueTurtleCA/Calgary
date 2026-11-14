@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// CheckLinksStep.swift
+//
+
 import Foundation
 
 /// A build step that checks the internal links in the site's output.

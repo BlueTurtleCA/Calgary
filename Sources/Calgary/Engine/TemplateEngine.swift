@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// TemplateEngine.swift
+//
+
 import Foundation
 
 /// Errors that can occur while rendering a template.

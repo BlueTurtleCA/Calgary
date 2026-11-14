@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// ExecuteCommandStep.swift
+//
+
 import Foundation
 
 /// A build step that runs an external command.

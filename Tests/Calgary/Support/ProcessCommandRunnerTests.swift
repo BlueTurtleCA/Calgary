@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// ProcessCommandRunnerTests.swift
+//
+
 import Foundation
 import Testing
 @testable import Calgary

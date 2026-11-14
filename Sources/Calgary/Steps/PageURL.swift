@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// PageURL.swift
+//
+
 /// Shared helpers for a page's URLs in the built site.
 ///
 /// A page's **URL path** is its location relative to the site root, with no

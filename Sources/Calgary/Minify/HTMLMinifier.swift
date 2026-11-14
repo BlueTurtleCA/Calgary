@@ -1,3 +1,10 @@
+//
+// Calgary
+// Copyright (C) 2026 Blue Turtle Corporation
+// Author: David Gill
+// HTMLMinifier.swift
+//
+
 /// Minifies HTML: removes comments and collapses whitespace, while leaving
 /// the contents of raw elements (`<script>`, `<style>`, `<textarea>`,
 /// `<pre>`, and `<code>`) untouched, where whitespace is significant.
