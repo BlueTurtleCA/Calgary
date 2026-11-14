@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/calgary.jpg" width="256" alt="Calgary">
+</p>
+
 # Calgary
 
 A static site generator where the build pipeline is Swift code.
