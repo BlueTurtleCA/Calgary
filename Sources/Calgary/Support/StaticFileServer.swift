@@ -30,10 +30,10 @@ final class StaticFileServer {
     /// a reload script is injected into HTML pages.
     private let hotReload: Bool
 
+    #if canImport(Network)
     /// The open event stream connections, so `broadcast(_:)` can reach them.
     let eventStreams = EventStreamConnections()
 
-    #if canImport(Network)
     private var listener: NWListener?
     #endif
 
@@ -112,12 +112,15 @@ final class StaticFileServer {
 
     /// Sends an event to every open event stream connection.
     func broadcast(_ event: String) {
+        #if canImport(Network)
         eventStreams.broadcast(event)
+        #endif
     }
 }
 
 // MARK: - Request handling
 
+#if canImport(Network)
 extension StaticFileServer {
     /// Serves a single connection: reads the request headers, then responds.
     private static func handle(
@@ -432,6 +435,7 @@ extension StaticFileServer {
         }
     }
 }
+#endif
 
 // MARK: - Helpers
 
@@ -440,6 +444,7 @@ private final class RequestBuffer: @unchecked Sendable {
     var data = Data()
 }
 
+#if canImport(Network)
 /// The open event stream connections, shared between the connection
 /// handlers and `broadcast(_:)`.
 final class EventStreamConnections: @unchecked Sendable {
@@ -486,6 +491,7 @@ final class EventStreamConnections: @unchecked Sendable {
         }
     }
 }
+#endif
 
 /// A one-shot signal that reports when the listener becomes ready or fails.
 private final class StartState: @unchecked Sendable {

@@ -9,6 +9,7 @@ import Foundation
 import Testing
 @testable import Calgary
 
+#if canImport(Network)
 @Suite("StaticFileServer")
 struct StaticFileServerTests {
     /// A file system holding a small site to serve, plus a secret file
@@ -286,3 +287,4 @@ private final class EventLineReader {
         }
     }
 }
+#endif

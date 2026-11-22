@@ -471,10 +471,24 @@ struct TemplateEngine: Sendable {
         return variable
     }
 
-    private static let variableNamePattern = "^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)*$"
-
+    /// Whether `text` is a dot-separated variable name: one or more
+    /// segments of ASCII letters, digits, or underscores, joined by dots.
     private static func isVariableName(_ text: String) -> Bool {
-        NSPredicate(format: "SELF MATCHES %@", Self.variableNamePattern).evaluate(with: text)
+        var inSegment = false
+        for character in text {
+            if character == "." {
+                guard inSegment else { return false }
+                inSegment = false
+            } else if ("a"..."z").contains(character)
+                || ("A"..."Z").contains(character)
+                || ("0"..."9").contains(character)
+                || character == "_" {
+                inSegment = true
+            } else {
+                return false
+            }
+        }
+        return inSegment
     }
 
     // MARK: Includes
