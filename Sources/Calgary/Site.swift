@@ -227,7 +227,62 @@ public final class Site: @unchecked Sendable {
         input: String? = nil,
         output: String? = nil
     ) -> Site {
-        addStep(ExecuteCommandStep(command: command, arguments: arguments, input: input, output: output))
+        addStep(
+            ExecuteCommandStep(
+                fallback: CommandInvocation(command, arguments: arguments),
+                input: input,
+                output: output
+            )
+        )
+    }
+
+    /// Adds a step that runs an external command, with per-platform
+    /// overrides when a command differs by platform.
+    ///
+    /// The command runs with the site's root as its working directory. The
+    /// given invocation runs on every platform that has no override; an
+    /// override replaces both the command and its arguments on its platform,
+    /// so a pipeline can declare one command that builds on macOS, Linux,
+    /// and Windows without platform conditionals:
+    ///
+    /// ```swift
+    /// site.executeCommand(
+    ///     CommandInvocation("npx", arguments: ["--yes", "@tailwindcss/cli", "-i", "input.css", "-o", "output.css"]),
+    ///     windows: CommandInvocation("npx.cmd", arguments: ["--yes", "@tailwindcss/cli", "-i", "input.css", "-o", "output.css"]),
+    ///     input: "input.css",
+    ///     output: "output.css"
+    /// )
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - invocation: The command to run when the platform has no override.
+    ///   - windows: The command to run on Windows, if it differs.
+    ///   - macos: The command to run on macOS, if it differs.
+    ///   - linux: The command to run on Linux, if it differs.
+    ///   - input: The file the command reads, relative to `root`.
+    ///     The build fails if it does not exist.
+    ///   - output: The file the command writes, relative to `root`.
+    ///     The build fails if it does not exist after the command finishes.
+    /// - Returns: The site, so calls can be daisy-chained.
+    @discardableResult
+    public func executeCommand(
+        _ invocation: CommandInvocation,
+        windows: CommandInvocation? = nil,
+        macos: CommandInvocation? = nil,
+        linux: CommandInvocation? = nil,
+        input: String? = nil,
+        output: String? = nil
+    ) -> Site {
+        addStep(
+            ExecuteCommandStep(
+                fallback: invocation,
+                windows: windows,
+                macos: macos,
+                linux: linux,
+                input: input,
+                output: output
+            )
+        )
     }
 
     /// Registers the directory that contains the site's templates.
@@ -469,7 +524,6 @@ public final class Site: @unchecked Sendable {
     /// `open(_:)`, which opens a single file and finishes, the step keeps
     /// the process running: it blocks until the process is interrupted
     /// (for example, with Ctrl-C), which stops the server and ends the
-    /// build. On platforms without Network.framework the step fails the
     /// build.
     ///
     /// When `hotReload` is enabled (the default), the site's root is

@@ -9,12 +9,14 @@ import Foundation
 import Testing
 @testable import Calgary
 
+#if !os(Windows)
 /// Tests for the real `ProcessCommandRunner`.
 ///
 /// These run small, side-effect-free system commands (`echo`, `sh`, `pwd`)
 /// and temporary shell scripts, so the production path — PATH resolution,
 /// output capture, working directory — is covered without touching the
-/// project's files.
+/// project's files. On Windows, `ProcessCommandRunnerWindowsTests` covers
+/// the same production path with `cmd`.
 @Suite("ProcessCommandRunner")
 struct ProcessCommandRunnerTests {
     private let runner = ProcessCommandRunner()
@@ -121,3 +123,4 @@ struct ProcessCommandRunnerTests {
         return directory
     }
 }
+#endif

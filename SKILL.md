@@ -233,6 +233,7 @@ swift run MySite
 |---|---|
 | `copyAssets(from:)` | Copies the assets directory into the output, preserving relative paths |
 | `executeCommand(_:arguments:input:output:)` | Runs an external command with the project root as working directory; fails the build if the declared input is missing or the declared output is not produced |
+| `executeCommand(_ invocation:windows:macos:linux:input:output:)` | Runs an external command, selecting the `CommandInvocation` declared for the platform the build runs on |
 | `registerTemplates(in:)` | Registers the templates directory (required by `renderPages`) |
 | `registerComponents(in:)` | Registers the components directory |
 | `localize(defaultLocale:locales:strings:)` | Configures locales and the strings source (YAML directory or `.xcstrings` catalog); translations render under `/<locale>/` |
@@ -277,12 +278,26 @@ Declare `tailwindcss` and `@tailwindcss/cli` in a `package.json` at the project 
 )
 ```
 
+### Per-platform commands
+
+When a command genuinely differs by platform, declare one invocation per platform in a single step — the first invocation is the fallback for platforms without an override:
+
+```swift
+.executeCommand(
+    CommandInvocation("npx", arguments: ["--yes", "@tailwindcss/cli", "-i", "input.css", "-o", "output.css"]),
+    windows: CommandInvocation("npx.cmd", arguments: ["--yes", "@tailwindcss/cli", "-i", "input.css", "-o", "output.css"]),
+    input: "input.css",
+    output: "output.css"
+)
+```
+
 ## Gotchas
 
 - Relative paths in `Site(...)` resolve against the site's `root`, which defaults to the current working directory. When the executable is run from Xcode's run button, that is DerivedData, not the project root — pass an explicit `root:` anchored to the pipeline file with `#filePath` (as in the example above).
 - `renderPages` requires `registerTemplates(in:)` to have been called — including when the site has collections, whose pages and index render from the templates directory.
 - Markdown is rendered with smart punctuation disabled — straight quotes and `{% include %}` tags pass through literally.
 - `open(_:)` is a no-op off Apple platforms.
+- On Windows, `executeCommand` resolves commands the way `cmd` does: `PATHEXT` extensions (`.COM`, `.EXE`, `.BAT`, `.CMD`, …) are tried in `PATH` and in the runner's additional search directories, so `npx` finds npm's `npx.cmd` shim. Add a `windows:` override only when the executable or its arguments genuinely differ.
 - A `.<locale>.md` page is a translation only when that locale is declared in `localize`; otherwise it's an ordinary page.
 - A site has one strings source: a directory of YAML files or a `.xcstrings` catalog, not both.
 - Add `build/` (and `node_modules/`, if using Tailwind) to `.gitignore`.

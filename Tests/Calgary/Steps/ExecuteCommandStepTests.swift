@@ -153,15 +153,51 @@ struct ExecuteCommandStepTests {
         }
     }
 
-    @Test("Describes itself with the full command line")
+    @Test("Describes itself with the resolved command line")
     func nameIncludesCommandLine() {
         let step = ExecuteCommandStep(
-            command: "npx",
-            arguments: ["tailwindcss", "-i", "input.css"],
-            input: nil,
-            output: nil
+            fallback: CommandInvocation("npx", arguments: ["tailwindcss", "-i", "input.css"]),
+            platform: .macOS
         )
 
         #expect(step.name == "Run 'npx tailwindcss -i input.css'")
+    }
+
+    @Test("Selects the platform override when one is declared")
+    func selectsPlatformOverride() {
+        let fallback = CommandInvocation("npx", arguments: ["build"])
+        let windows = CommandInvocation("npx.cmd", arguments: ["build"])
+
+        let onWindows = ExecuteCommandStep(fallback: fallback, windows: windows, platform: .windows)
+        #expect(onWindows.invocation == windows)
+
+        let onMacOS = ExecuteCommandStep(fallback: fallback, windows: windows, platform: .macOS)
+        #expect(onMacOS.invocation == fallback)
+
+        let onLinux = ExecuteCommandStep(fallback: fallback, windows: windows, platform: .linux)
+        #expect(onLinux.invocation == fallback)
+    }
+
+    @Test("Selects the fallback on every platform when no overrides are declared")
+    func selectsFallbackWithoutOverrides() {
+        let fallback = CommandInvocation("npx", arguments: ["build"])
+
+        for platform in Platform.allCases {
+            let step = ExecuteCommandStep(fallback: fallback, platform: platform)
+            #expect(step.invocation == fallback)
+        }
+    }
+
+    @Test("Runs the fallback invocation when the platform has no override")
+    func runsFallbackInvocation() throws {
+        let fileSystem = InMemoryFileSystem()
+        let runner = MockCommandRunner { _, _, _ in commandResult() }
+        let site = makeSite(fileSystem: fileSystem, runner: runner)
+
+        try site.executeCommand(CommandInvocation("npx", arguments: ["build"])).build()
+
+        #expect(runner.invocations == [
+            .init(command: "npx", arguments: ["build"], workingDirectory: virtualRoot)
+        ])
     }
 }

@@ -16,7 +16,7 @@ Calgary is a Swift package with a small library for building static sites. Your 
 
 - Swift 6.4 or later
 - Node.js and npm, only if your pipeline runs external commands (the sample builds its CSS with Tailwind)
-- macOS for the `open` step; the rest of the library is platform-agnostic
+- The `open` step opens a browser on Apple platforms; the rest of the library works on macOS, Linux, and Windows
 
 ## Getting started
 
@@ -280,6 +280,7 @@ A `Site` is a list of steps, run in order by `build()` (which first removes and 
 |---|---|
 | `copyAssets(from:)` | Copies the assets directory into the output, preserving relative paths |
 | `executeCommand(_:arguments:input:output:)` | Runs an external command with the site root as working directory; the build fails if the declared input is missing or the declared output is not produced |
+| `executeCommand(_ invocation:windows:macos:linux:input:output:)` | Runs an external command, selecting the invocation declared for the platform the build runs on ([Per-platform commands](#per-platform-commands)) |
 | `registerTemplates(in:)` | Registers the templates directory (required by `renderPages`) |
 | `registerComponents(in:)` | Registers the components directory |
 | `localize(defaultLocale:locales:strings:)` | Configures the site's locales and strings source (YAML directory or `.xcstrings` catalog); translations render under `/<locale>/` |
@@ -289,6 +290,22 @@ A `Site` is a list of steps, run in order by `build()` (which first removes and 
 | `open(_:)` | Opens a built page in the default browser (Apple platforms) |
 | `serve(port:hotReload:)` | Serves the built site over HTTP and keeps the process running; with hot reload (the default), a file change rebuilds the site in place and reloads the browser |
 | `addStep(_:)` | Adds a custom step |
+
+### Per-platform commands
+
+A command that differs by platform is declared in one step, without `#if` in the pipeline file. Each invocation is a `CommandInvocation` (an executable and its arguments); the first invocation runs on every platform that has no override:
+
+```swift
+let site = Site(name: "My Site", source: "content", output: "build")
+    .executeCommand(
+        CommandInvocation("npx", arguments: ["--yes", "@tailwindcss/cli", "-i", "assets/css/input.css", "-o", "build/css/site.css"]),
+        windows: CommandInvocation("npx.cmd", arguments: ["--yes", "@tailwindcss/cli", "-i", "assets/css/input.css", "-o", "build/css/site.css"]),
+        input: "assets/css/input.css",
+        output: "build/css/site.css"
+    )
+```
+
+On Windows, `ProcessCommandRunner` resolves command names the way `cmd` does: for a bare name it tries the `PATHEXT` extensions (`.COM`, `.EXE`, `.BAT`, `.CMD`, …) in `PATH` and in the runner's additional search directories, so a command named `npx` finds npm's `npx.cmd` shim. An override is therefore only needed when the executable or its arguments genuinely differ. The child's `PATH` is prepended with the resolved executable's directory (`;`-separated on Windows) so the command can find sibling binaries — `npx` finds `node` that way.
 
 ### Custom steps
 
@@ -322,7 +339,7 @@ swift run Example                   # builds and opens the site
 
 The sample resolves its content relative to the current working directory, so run `swift run Example` from the package root.
 
-Xcode's run button works too: when a command is missing from the minimal `PATH` Xcode launches with, `ProcessCommandRunner` falls back to the common install locations for Node.js and other command-line tools (Homebrew, nvm, Volta, asdf, mise).
+Xcode's run button works too: when a command is missing from the minimal `PATH` Xcode launches with, `ProcessCommandRunner` falls back to the common install locations for Node.js and other command-line tools (Homebrew, nvm, Volta, asdf, and mise on macOS and Linux; the per-user Node.js installer, winget, npm's global directory, volta, scoop, and nvm-windows on Windows).
 
 ## Development
 

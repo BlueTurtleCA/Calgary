@@ -37,6 +37,7 @@ Calgary/
 │   │   ├── Support/                          # abstractions over system capabilities
 │   │   │   ├── FileSystem.swift              # file-system protocol + local implementation
 │   │   │   ├── CommandRunner.swift           # command-execution protocol + Process implementation
+│   │   │   ├── Platform.swift                # the platform a build runs on (macOS/Linux/Windows)
 │   │   │   ├── Glob.swift                    # glob matching for file paths
 │   │   │   ├── FileWatcher.swift             # FSEvents-based file watching
 │   │   │   └── StaticFileServer.swift        # HTTP server for the serve step
@@ -82,7 +83,8 @@ Calgary/
     └── Support/
         ├── InMemoryFileSystem.swift          # in-memory FileSystem for tests
         ├── MockCommandRunner.swift           # scripted CommandRunner for tests
-        └── ProcessCommandRunnerTests.swift   # real-runner tests (echo/sh/pwd, no file writes)
+        ├── ProcessCommandRunnerTests.swift   # real-runner tests (echo/sh/pwd, no file writes; non-Windows)
+        └── ProcessCommandRunnerWindowsTests.swift  # real-runner tests on Windows (cmd, .cmd shims)
 ```
 
 ## Content model
@@ -239,7 +241,7 @@ struct Main {
 
 ## Library design
 
-- **Public API surface**: `Site` and its builder methods (plus `build()`) are the public API. `BuildStep`, `BuildError`, `FileSystem`, `LocalFileSystem`, `CommandRunner`, `CommandResult`, `ProcessCommandRunner`, and `Variable` (the value type of `Site`'s `templateVariables`) are also public so downstream projects can write custom steps and tests. Everything else — engine, frontmatter, steps — stays `internal`.
+- **Public API surface**: `Site` and its builder methods (plus `build()`) are the public API. `BuildStep`, `BuildError`, `FileSystem`, `LocalFileSystem`, `CommandRunner`, `CommandResult`, `ProcessCommandRunner`, `Variable` (the value type of `Site`'s `templateVariables`), and `CommandInvocation`/`Platform` (per-platform commands, via `executeCommand(_ invocation:windows:macos:linux:input:output:)`) are also public so downstream projects can write custom steps and tests. Everything else — engine, frontmatter, steps — stays `internal`.
 - **Path resolution**: the `Site` API takes relative paths (`source: "content"`, `output: "build"`); they resolve against `root`, which defaults to the current working directory (the consumer's project root when they run their executable).
 - **Sample is not API**: the `Example` executable and the demo content directories exist to demonstrate and integration-test the library; they are not shipped as a product and must not be treated as part of the public API.
 
@@ -259,15 +261,28 @@ struct Main {
 |---|---|
 | `swiftlang/swift-markdown` | GFM markdown → HTML, Apple-maintained |
 | `jpsim/Yams` | Frontmatter YAML |
+| `apple/swift-nio` | Cross-platform HTTP server for the `serve` step (2.102.0+, the first releases that build on Windows) |
 
 The sample site additionally needs Node: `tailwindcss` and `@tailwindcss/cli` are declared in `Sources/Example/package.json`. After cloning, run `npm install` in `Sources/Example` once; the pipeline then runs the CLI via `npx`.
 
 Deliberately **no** Stencil/Handlebars: a custom engine with interpolation, includes, conditionals, and loops is a few hundred lines, matches the syntax exactly, and avoids a full engine we'd only use 10% of.
 
+## Current state (2026-11-24)
+
+The serve step and the hot-reload watcher are NIO-based: cross-platform
+(macOS, Linux, Windows) for file serving; hot reload still degrades
+gracefully off Apple platforms. `ServeSiteStepTests` cover the serve step
+(including a Windows data-path test); the hot-reload watcher is covered by
+`FileWatcherTests` on Apple hosts. `StaticFileServer.stop()` deliberately
+does not wait on the NIO group shutdown — the completion rides libdispatch,
+which can be unable to spawn worker threads on a loaded machine, and a
+synchronous wait would hang the caller (this flaked the full test suite;
+see the bug-hunt note in `Plans/migrate-static-file-server-to-swiftnio.md`).
+
 ## Working in this repo
 
 - **Build**: the `Calgary-Package` Xcode scheme, or `swift build`.
-- **Test**: `swift test` (or the scheme's test action). Tests use the swift-testing framework and run against `InMemoryFileSystem`/`MockCommandRunner`; `ProcessCommandRunnerTests` exercise the real runner with harmless commands.
+- **Test**: `swift test` (or the scheme's test action). Tests use the swift-testing framework and run against `InMemoryFileSystem`/`MockCommandRunner`; `ProcessCommandRunnerTests` exercise the real runner with harmless commands on non-Windows hosts, and `ProcessCommandRunnerWindowsTests` (`#if os(Windows)`) cover the same production path with `cmd` and temporary `.cmd` shims.
 - **Run the sample**: `swift run Example` from the package root (requires the one-time `npm install` above; the sample resolves its content relative to the current working directory). It rebuilds `Sources/Example/build/` from scratch and opens `index.html` in a browser.
 - `build/` and `node_modules/` are gitignored.
 

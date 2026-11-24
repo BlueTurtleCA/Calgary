@@ -22,6 +22,9 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.9.0"),
         .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0"),
+        // 2.102.0 is the first release whose targets all build on Windows
+        // under the upstream CI; earlier releases fail to compile there.
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.102.0"),
     ],
     targets: [
         .target(
@@ -29,6 +32,9 @@ let package = Package(
             dependencies: [
                 .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "Yams", package: "Yams"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
             ]
         ),
         .executableTarget(

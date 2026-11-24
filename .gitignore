@@ -14,5 +14,5 @@ build/
 # Node (sample site's CSS build)
 node_modules/
 
-# TerrapinCode
-.terrapincode/
+# Terrapin
+.terrapin/

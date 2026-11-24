@@ -6,9 +6,9 @@
 //
 
 import Foundation
-#if canImport(Network)
-import Network
-#endif
+import NIOCore
+import NIOHTTP1
+import NIOPosix
 
 /// A minimal HTTP server that serves static files from a directory.
 ///
@@ -16,6 +16,7 @@ import Network
 /// served in production, where absolute paths like `/css/site.css` resolve
 /// against the site's root rather than the file system's. It listens on a
 /// single port, serves files read-only, and handles GET and HEAD requests.
+/// It is built on SwiftNIO so it runs on macOS, Linux, and Windows.
 final class StaticFileServer {
     /// The directory served at the site's root.
     private let root: URL
@@ -30,12 +31,18 @@ final class StaticFileServer {
     /// a reload script is injected into HTML pages.
     private let hotReload: Bool
 
-    #if canImport(Network)
     /// The open event stream connections, so `broadcast(_:)` can reach them.
     let eventStreams = EventStreamConnections()
 
-    private var listener: NWListener?
-    #endif
+    /// The event loop group that drives the server.
+    private var group: MultiThreadedEventLoopGroup?
+
+    /// Temporary bug-hunting hook: exposes the group so a hung test can
+    /// print its event loop state.
+    var eventLoopGroupForTesting: MultiThreadedEventLoopGroup? { self.group }
+
+    /// The channel accepting incoming connections.
+    private var serverChannel: Channel?
 
     /// The port the server is listening on.
     ///
@@ -52,202 +59,178 @@ final class StaticFileServer {
 
     /// Starts listening for connections.
     ///
-    /// - Throws: `BuildError.portInUse` if the port is already taken, or
-    ///   `BuildError.serveUnavailable` on platforms without Network.framework.
+    /// - Throws: `BuildError.portInUse` if the port is already taken.
     func start() throws {
-        #if canImport(Network)
-        let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port))
-        let queue = DispatchQueue(label: "Calgary.StaticFileServer")
-
+        // A local dev server needs one event loop thread: it is bound to a
+        // local port and serves the traffic of a single browser.
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let root = self.root
         let fileSystem = self.fileSystem
         let eventStreams = self.eventStreams
         let hotReload = self.hotReload
-        listener.newConnectionHandler = { connection in
-            connection.start(queue: queue)
-            Self.handle(
-                connection: connection,
-                root: root,
-                fileSystem: fileSystem,
-                eventStreams: eventStreams,
-                hotReload: hotReload
-            )
-        }
-
-        let started = StartState()
-        listener.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                started.signal()
-            case .failed(let error):
-                started.fail(with: error)
-            default:
-                break
+        do {
+            let bootstrap = ServerBootstrap(group: group)
+                .childChannelInitializer { channel in
+                    // Runs on the child channel's event loop, so the
+                    // synchronous pipeline operations are available.
+                    let handler = StaticFileHandler(
+                        root: root,
+                        fileSystem: fileSystem,
+                        eventStreams: eventStreams,
+                        hotReload: hotReload
+                    )
+                    do {
+                        try channel.pipeline.syncOperations.addHandlers([
+                            HTTPResponseEncoder(configuration: .init()),
+                            ByteToMessageHandler(HTTPRequestDecoder()),
+                        ])
+                        try channel.pipeline.syncOperations.addHandler(handler)
+                        return channel.eventLoop.makeSucceededVoidFuture()
+                    } catch {
+                        return channel.eventLoop.makeFailedFuture(error)
+                    }
+                }
+            // Bind to all interfaces, dual-stack when IPv6 is available and
+            // IPv4 only otherwise (some environments disable IPv6).
+            let channel: Channel
+            do {
+                channel = try bootstrap.bind(to: SocketAddress(ipAddress: "::", port: Int(port))).wait()
+            } catch {
+                channel = try bootstrap.bind(to: SocketAddress(ipAddress: "0.0.0.0", port: Int(port))).wait()
             }
+            self.group = group
+            self.serverChannel = channel
+            self.assignedPort = UInt16(truncatingIfNeeded: channel.localAddress?.port ?? Int(port))
+        } catch {
+            group.shutdownGracefully { _ in }
+            throw Self.bindError(error, port: Int(port))
         }
-
-        listener.start(queue: queue)
-        started.wait()
-        if let error = started.error {
-            if let nwError = error as? NWError, case .posix(let code) = nwError, code == .EADDRINUSE {
-                throw BuildError.portInUse(port: Int(port))
-            }
-            throw error
-        }
-        self.assignedPort = listener.port?.rawValue ?? port
-        self.listener = listener
-        #else
-        throw BuildError.serveUnavailable
-        #endif
     }
 
     /// Stops listening for connections and closes any open event streams.
+    ///
+    /// The event loop group is shut down but not waited on: the shutdown
+    /// completion is delivered through libdispatch, and when the process
+    /// cannot spawn new threads (for example under heavy concurrent load),
+    /// a synchronous wait here would block the caller forever. Everything
+    /// this server needs from the shutdown — closing the channels and
+    /// ending the event streams — happens on the event loop thread itself,
+    /// so the group's remaining bookkeeping can finish in the background
+    /// (or simply be abandoned when the process exits).
     func stop() {
-        #if canImport(Network)
-        listener?.cancel()
-        listener = nil
         eventStreams.cancelAll()
-        #endif
+        if let serverChannel {
+            serverChannel.close(mode: .all, promise: nil)
+            self.serverChannel = nil
+        }
+        if let group {
+            group.shutdownGracefully { _ in }
+            self.group = nil
+        }
     }
 
     /// Sends an event to every open event stream connection.
     func broadcast(_ event: String) {
-        #if canImport(Network)
         eventStreams.broadcast(event)
-        #endif
     }
+
+    /// Maps a bind failure to the build's port error when the port is
+    /// already in use, and passes every other error through unchanged.
+    private static func bindError(_ error: Error, port: Int) -> Error {
+        if let ioError = error as? IOError, ioError.errnoCode == portInUseCode {
+            return BuildError.portInUse(port: port)
+        }
+        return error
+    }
+
+    /// The system error code for "address already in use".
+    private static let portInUseCode: Int32 = {
+        #if os(Windows)
+        // The C runtime's EADDRINUSE is the Winsock code WSAEADDRINUSE.
+        return 10048
+        #else
+        return EADDRINUSE
+        #endif
+    }()
 }
 
 // MARK: - Request handling
 
-#if canImport(Network)
-extension StaticFileServer {
-    /// Serves a single connection: reads the request headers, then responds.
-    private static func handle(
-        connection: NWConnection,
-        root: URL,
-        fileSystem: any FileSystem,
-        eventStreams: EventStreamConnections,
-        hotReload: Bool
-    ) {
-        let buffer = RequestBuffer()
-        receiveHeaders(from: connection, into: buffer) {
-            respond(
-                to: connection,
-                request: buffer.data,
-                root: root,
-                fileSystem: fileSystem,
-                eventStreams: eventStreams,
-                hotReload: hotReload
-            )
-        }
+/// Serves the site's files to a single connection.
+///
+/// Every request is answered when its head arrives: GET and HEAD are the only
+/// methods the server handles, so no request body is ever read.
+private final class StaticFileHandler: ChannelInboundHandler {
+    typealias InboundIn = HTTPServerRequestPart
+    typealias OutboundOut = HTTPServerResponsePart
+
+    /// The directory served at the site's root.
+    private let root: URL
+
+    /// The file system the files are read from.
+    private let fileSystem: any FileSystem
+
+    /// The open event stream connections.
+    private let eventStreams: EventStreamConnections
+
+    /// Whether hot reload is enabled.
+    private let hotReload: Bool
+
+    init(root: URL, fileSystem: any FileSystem, eventStreams: EventStreamConnections, hotReload: Bool) {
+        self.root = root
+        self.fileSystem = fileSystem
+        self.eventStreams = eventStreams
+        self.hotReload = hotReload
     }
 
-    /// Reads data until the request headers are complete, the connection
-    /// closes, or the request grows unreasonably large.
-    private static func receiveHeaders(
-        from connection: NWConnection,
-        into buffer: RequestBuffer,
-        then finish: @escaping @Sendable () -> Void
-    ) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, isComplete, error in
-            if let data {
-                buffer.data.append(data)
-            }
-            let complete = isComplete
-                || error != nil
-                || buffer.data.range(of: headerTerminator) != nil
-                || buffer.data.count > 16_384
-            if complete {
-                finish()
-            } else {
-                receiveHeaders(from: connection, into: buffer, then: finish)
-            }
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        guard case .head(let request) = unwrapInboundIn(data) else {
+            // A body part for a request whose head was already answered;
+            // nothing more to do.
+            return
         }
+        handle(request: request, context: context)
     }
 
-    private static let headerTerminator = Data("\r\n\r\n".utf8)
+    /// A disconnected client is removed from the event stream registry; a
+    /// write that fails on a dead connection closes the channel the same way.
+    func channelInactive(context: ChannelHandlerContext) {
+        eventStreams.remove(context.channel)
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        context.close(promise: nil)
+    }
 
     /// Parses the request line and serves the requested path.
-    private static func respond(
-        to connection: NWConnection,
-        request: Data,
-        root: URL,
-        fileSystem: any FileSystem,
-        eventStreams: EventStreamConnections,
-        hotReload: Bool
-    ) {
-        let text = String(data: request, encoding: .utf8) ?? ""
-        let firstLine = text.split(separator: "\r\n").first.map(String.init) ?? ""
-        let parts = firstLine.split(separator: " ")
-
-        guard parts.count >= 2 else {
-            send(
-                connection,
-                status: 400,
-                reason: "Bad Request",
+    private func handle(request: HTTPRequestHead, context: ChannelHandlerContext) {
+        guard request.method == .GET || request.method == .HEAD else {
+            Self.respond(
+                context: context,
+                status: .methodNotAllowed,
                 contentType: "text/plain; charset=utf-8",
-                body: Data("Bad request".utf8)
+                body: Data("Method not allowed".utf8),
+                head: false
             )
             return
         }
+        let head = request.method == .HEAD
+        let rawPath = request.uri
 
-        switch parts[0] {
-        case "GET":
-            serve(
-                path: String(parts[1]),
-                head: false,
-                to: connection,
-                root: root,
-                fileSystem: fileSystem,
-                eventStreams: eventStreams,
-                hotReload: hotReload
-            )
-        case "HEAD":
-            serve(
-                path: String(parts[1]),
-                head: true,
-                to: connection,
-                root: root,
-                fileSystem: fileSystem,
-                eventStreams: eventStreams,
-                hotReload: hotReload
-            )
-        default:
-            send(
-                connection,
-                status: 405,
-                reason: "Method Not Allowed",
-                contentType: "text/plain; charset=utf-8",
-                body: Data("Method not allowed".utf8)
-            )
-        }
-    }
-
-    /// Maps the requested path to a file under `root` and serves it.
-    private static func serve(
-        path rawPath: String,
-        head: Bool,
-        to connection: NWConnection,
-        root: URL,
-        fileSystem: any FileSystem,
-        eventStreams: EventStreamConnections,
-        hotReload: Bool
-    ) {
         // Strip the query string, if any, and percent-decode the path.
         let path = rawPath.split(separator: "?").first.map(String.init) ?? rawPath
         let decoded = path.removingPercentEncoding ?? path
 
         // Reject any attempt to reach above the served root.
         if decoded.split(separator: "/").contains("..") {
-            sendNotFound(connection, head: head)
+            sendNotFound(context, head: head)
             return
         }
 
         // The event stream endpoint pushes reload notifications to the
         // browser; it is only available when hot reload is enabled.
         if hotReload, !head, decoded == "/__events" {
-            sendEventStream(to: connection, streams: eventStreams)
+            startEventStream(context: context)
             return
         }
 
@@ -262,63 +245,58 @@ extension StaticFileServer {
         }
 
         guard fileSystem.fileExists(atPath: url.path) else {
-            sendNotFound(connection, head: head)
+            sendNotFound(context, head: head)
             return
         }
 
         do {
             var body = try fileSystem.read(contentsOf: url)
-            let type = contentType(for: url.path)
+            let type = Self.contentType(for: url.path)
             // With hot reload on, HTML pages carry a small script that
             // listens for reload notifications on the event stream.
             if !head, hotReload, type.hasPrefix("text/html") {
-                body = injectReloadScript(into: body)
+                body = Self.injectReloadScript(into: body)
             }
-            send(
-                connection,
-                status: 200,
-                reason: "OK",
-                contentType: type,
-                body: body,
-                head: head
-            )
+            Self.respond(context: context, status: .ok, contentType: type, body: body, head: head)
         } catch {
-            sendNotFound(connection, head: head)
+            sendNotFound(context, head: head)
         }
     }
 
     /// Sends an HTTP response and closes the connection.
-    private static func send(
-        _ connection: NWConnection,
-        status: Int,
-        reason: String,
+    ///
+    /// The response carries `Connection: close`, matching the server's
+    /// previous behavior: the writes are flushed in order and the channel
+    /// closes behind them.
+    private static func respond(
+        context: ChannelHandlerContext,
+        status: HTTPResponseStatus,
         contentType: String?,
         body: Data,
-        head: Bool = false
+        head: Bool
     ) {
-        var headers = "HTTP/1.1 \(status) \(reason)\r\n"
-        headers += "Content-Length: \(body.count)\r\n"
+        var headers = HTTPHeaders()
+        headers.add(name: "Content-Length", value: "\(body.count)")
         if let contentType {
-            headers += "Content-Type: \(contentType)\r\n"
+            headers.add(name: "Content-Type", value: contentType)
         }
-        headers += "Connection: close\r\n\r\n"
+        headers.add(name: "Connection", value: "close")
+        let responseHead = HTTPResponseHead(version: .http1_1, status: status, headers: headers)
 
-        var response = Data(headers.utf8)
+        context.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
         if !head {
-            response.append(body)
+            context.write(NIOAny(HTTPServerResponsePart.body(IOData.byteBuffer(ByteBuffer(bytes: body)))), promise: nil)
         }
-        connection.send(content: response, completion: .contentProcessed { _ in
-            connection.cancel()
-        })
+        context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil)), promise: nil)
+        context.close(promise: nil)
     }
 
-    private static func sendNotFound(_ connection: NWConnection, head: Bool) {
-        send(
-            connection,
-            status: 404,
-            reason: "Not Found",
+    private func sendNotFound(_ context: ChannelHandlerContext, head: Bool) {
+        Self.respond(
+            context: context,
+            status: .notFound,
             contentType: "text/html; charset=utf-8",
-            body: notFoundPage,
+            body: Self.notFoundPage,
             head: head
         )
     }
@@ -352,30 +330,18 @@ extension StaticFileServer {
     /// Opens a server-sent events stream: the response headers are sent once
     /// and the connection stays open, receiving `broadcast(_:)` events until
     /// the client disconnects.
-    private static func sendEventStream(to connection: NWConnection, streams: EventStreamConnections) {
-        var headers = "HTTP/1.1 200 OK\r\n"
-        headers += "Content-Type: text/event-stream\r\n"
-        headers += "Cache-Control: no-cache\r\n"
-        headers += "Connection: keep-alive\r\n"
-        headers += "\r\n"
-        headers += ": connected\n"
+    private func startEventStream(context: ChannelHandlerContext) {
+        var headers = HTTPHeaders()
+        headers.add(name: "Content-Type", value: "text/event-stream")
+        headers.add(name: "Cache-Control", value: "no-cache")
+        let responseHead = HTTPResponseHead(version: .http1_1, status: .ok, headers: headers)
 
-        streams.add(connection)
-        connection.send(content: Data(headers.utf8), completion: .contentProcessed { _ in })
-        listenForDisconnect(on: connection, streams: streams)
-    }
-
-    /// Keeps reading from the connection so a client disconnect is noticed
-    /// and the connection is released.
-    private static func listenForDisconnect(on connection: NWConnection, streams: EventStreamConnections) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { _, _, isComplete, error in
-            if isComplete || error != nil {
-                streams.remove(connection)
-                connection.cancel()
-            } else {
-                listenForDisconnect(on: connection, streams: streams)
-            }
-        }
+        context.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+        context.writeAndFlush(
+            NIOAny(HTTPServerResponsePart.body(IOData.byteBuffer(ByteBuffer(string: ": connected\n")))),
+            promise: nil
+        )
+        eventStreams.add(context.channel)
     }
 
     /// The Content-Type for a file, by extension.
@@ -435,95 +401,54 @@ extension StaticFileServer {
         }
     }
 }
-#endif
 
 // MARK: - Helpers
 
-/// Accumulates the bytes of an in-flight request.
-private final class RequestBuffer: @unchecked Sendable {
-    var data = Data()
-}
-
-#if canImport(Network)
 /// The open event stream connections, shared between the connection
 /// handlers and `broadcast(_:)`.
 final class EventStreamConnections: @unchecked Sendable {
     private let lock = NSLock()
-    private var connections: [NWConnection] = []
+    private var channels: [Channel] = []
 
-    func add(_ connection: NWConnection) {
+    func add(_ channel: Channel) {
         lock.lock()
-        connections.append(connection)
+        channels.append(channel)
         lock.unlock()
     }
 
-    func remove(_ connection: NWConnection) {
+    /// Removes a connection, called when its channel goes inactive.
+    func remove(_ channel: Channel) {
         lock.lock()
-        connections.removeAll { $0 === connection }
+        channels.removeAll { $0 === channel }
         lock.unlock()
     }
 
-    var all: [NWConnection] {
+    var all: [Channel] {
         lock.lock()
         defer { lock.unlock() }
-        return connections
+        return channels
     }
 
-    /// Sends an event to every open connection, dropping any that fail.
+    /// Sends an event to every open connection.
+    ///
+    /// A write to a dead connection fails, which closes the channel and
+    /// removes it via the handler's `channelInactive` callback.
     func broadcast(_ event: String) {
-        let payload = Data("data: \(event)\n\n".utf8)
-        for connection in all {
-            connection.send(content: payload, completion: .contentProcessed { error in
-                if error != nil {
-                    self.remove(connection)
-                }
-            })
+        let part = HTTPServerResponsePart.body(
+            IOData.byteBuffer(ByteBuffer(string: "data: \(event)\n\n"))
+        )
+        for channel in all {
+            channel.writeAndFlush(part, promise: nil)
         }
     }
 
     func cancelAll() {
         lock.lock()
-        let connections = self.connections
-        self.connections = []
+        let channels = self.channels
+        self.channels = []
         lock.unlock()
-        for connection in connections {
-            connection.cancel()
+        for channel in channels {
+            channel.close(mode: .all, promise: nil)
         }
     }
 }
-#endif
-
-/// A one-shot signal that reports when the listener becomes ready or fails.
-private final class StartState: @unchecked Sendable {
-    private let semaphore = DispatchSemaphore(value: 0)
-    private var failure: Error?
-
-    func signal() {
-        semaphore.signal()
-    }
-
-    func fail(with error: Error) {
-        failure = error
-        semaphore.signal()
-    }
-
-    func wait() {
-        semaphore.wait()
-    }
-
-    var error: Error? {
-        failure
-    }
-}
-
-#if canImport(Network)
-private extension NWEndpoint.Port {
-    /// Creates a port from a raw value.
-    ///
-    /// Every `UInt16` is a valid port, so the failable initializer this wraps
-    /// cannot fail.
-    init(rawValue: UInt16) {
-        self.init(rawValue: rawValue)!
-    }
-}
-#endif

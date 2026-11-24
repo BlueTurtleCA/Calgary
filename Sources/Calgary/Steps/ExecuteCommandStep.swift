@@ -24,11 +24,13 @@ import Foundation
 /// )
 /// ```
 struct ExecuteCommandStep: BuildStep {
-    /// The executable to run.
-    let command: String
+    /// The command to run when the platform has no override.
+    let fallback: CommandInvocation
 
-    /// Arguments passed to the command.
-    let arguments: [String]
+    /// The command to run on each platform when it differs from `fallback`.
+    let windows: CommandInvocation?
+    let macos: CommandInvocation?
+    let linux: CommandInvocation?
 
     /// The file the command reads, relative to the site's root.
     let input: String?
@@ -36,8 +38,45 @@ struct ExecuteCommandStep: BuildStep {
     /// The file the command writes, relative to the site's root.
     let output: String?
 
+    /// The platform the command is selected for.
+    ///
+    /// Defaults to the platform the build runs on; tests force a value to
+    /// exercise the selection without a specific host.
+    let platform: Platform
+
+    init(
+        fallback: CommandInvocation,
+        windows: CommandInvocation? = nil,
+        macos: CommandInvocation? = nil,
+        linux: CommandInvocation? = nil,
+        input: String? = nil,
+        output: String? = nil,
+        platform: Platform = .current
+    ) {
+        self.fallback = fallback
+        self.windows = windows
+        self.macos = macos
+        self.linux = linux
+        self.input = input
+        self.output = output
+        self.platform = platform
+    }
+
+    /// The command and arguments selected for the platform: the platform's
+    /// override when one is declared, otherwise `fallback`.
+    var invocation: CommandInvocation {
+        switch platform {
+        case .windows:
+            return windows ?? fallback
+        case .macOS:
+            return macos ?? fallback
+        case .linux:
+            return linux ?? fallback
+        }
+    }
+
     var name: String {
-        "Run '\(([command] + arguments).joined(separator: " "))'"
+        "Run '\(([invocation.command] + invocation.arguments).joined(separator: " "))'"
     }
 
     func run(site: Site) throws {
@@ -51,8 +90,8 @@ struct ExecuteCommandStep: BuildStep {
         let result: CommandResult
         do {
             result = try site.commandRunner.run(
-                command: command,
-                arguments: arguments,
+                command: invocation.command,
+                arguments: invocation.arguments,
                 workingDirectory: site.root
             )
         } catch let error as BuildError {
@@ -70,7 +109,11 @@ struct ExecuteCommandStep: BuildStep {
             } else {
                 output = "The command exited with status \(result.exitCode)."
             }
-            throw BuildError.commandFailed(command: command, exitCode: result.exitCode, output: output)
+            throw BuildError.commandFailed(
+                command: invocation.command,
+                exitCode: result.exitCode,
+                output: output
+            )
         }
 
         if let output {
