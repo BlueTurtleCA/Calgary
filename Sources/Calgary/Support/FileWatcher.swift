@@ -153,11 +153,11 @@ final class FileWatcher: @unchecked Sendable {
         guard let info else { return }
         let context = Unmanaged<FileWatcherContext>.fromOpaque(info).takeUnretainedValue()
         var changed: Set<String> = []
-        if eventPaths != nil {
-            let cfPaths = Unmanaged<CFArray>.fromOpaque(eventPaths).takeUnretainedValue()
-            if let paths = cfPaths as? [String] {
-                changed.formUnion(paths)
-            }
+        // eventPaths is never null — the framework hands the callback a
+        // (possibly empty) array of paths to the directories it reports.
+        let cfPaths = Unmanaged<CFArray>.fromOpaque(eventPaths).takeUnretainedValue()
+        if let paths = cfPaths as? [String] {
+            changed.formUnion(paths)
         }
         context.watcher.handle(changedPaths: changed)
     }
