@@ -16,7 +16,7 @@ Calgary is a Swift package with a small library for building static sites. Your 
 
 - Swift 6.4 or later
 - Node.js and npm, only if your pipeline runs external commands (the sample builds its CSS with Tailwind)
-- The `open` step opens a browser on Apple platforms; the rest of the library works on macOS, Linux, and Windows
+- The `open` and `serve` steps open a browser (best-effort: on non-Apple platforms the launch goes through `xdg-open` or `cmd /c start`); the rest of the library works on macOS, Linux, and Windows
 
 ## Getting started
 
@@ -287,7 +287,7 @@ A `Site` is a list of steps, run in order by `build()` (which first removes and 
 | `addCollection(name:source:template:index:paginate:)` | Adds a collection of pages that share a template and get a generated index, optionally paginated; the pages are exposed to templates as `{{ site.<name> }}` |
 | `renderPages(glob:)` | Renders every page matching the glob (default `**/*.md`) into its template |
 | `generateSitemap(baseUrl:)` | Writes `sitemap.xml` of every built page under the base URL (defaulting to the site's `baseUrl`), with a `<lastmod>` per page (frontmatter `date`, falling back to file modification time) and, for localized sites, `hreflang` alternates |
-| `open(_:)` | Opens a built page in the default browser (Apple platforms) |
+| `open(_:)` | Opens a built page in the default browser |
 | `serve(port:hotReload:)` | Serves the built site over HTTP and keeps the process running; with hot reload (the default), a file change rebuilds the site in place and reloads the browser |
 | `addStep(_:)` | Adds a custom step |
 

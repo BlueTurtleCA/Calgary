@@ -530,8 +530,8 @@ public final class Site: @unchecked Sendable {
     /// watched for file changes: a change re-runs the pipeline's
     /// non-terminal steps in place and tells every open browser to reload,
     /// so edits to pages, templates, components, and assets (including the
-    /// CSS source) appear without a manual refresh. On platforms without
-    /// FSEvents the step serves without hot reload.
+    /// CSS source) appear without a manual refresh. The watcher uses
+    /// FSEvents on Apple platforms and a polling watcher elsewhere.
     ///
     /// - Parameters:
     ///   - port: The port to listen on. Defaults to `8080`.

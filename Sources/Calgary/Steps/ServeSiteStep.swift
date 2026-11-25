@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(AppKit)
-import AppKit
-#endif
 
 /// A build step that serves the built site over HTTP and opens it in the
 /// default browser.
@@ -63,20 +60,16 @@ struct ServeSiteStep: BuildStep {
             throw BuildError.missingConfiguration("invalid port \(port)")
         }
         print("Serving \(site.name) at \(url.absoluteString) (Ctrl-C to stop)")
-        #if canImport(AppKit)
-        NSWorkspace.shared.open(url)
-        #endif
+        BrowserOpener.open(
+            url: url,
+            commandRunner: site.commandRunner,
+            workingDirectory: site.root
+        )
 
-        #if os(macOS) || os(iOS)
         if hotReload {
             startHotReload(for: site, server: server)
             print("Hot reload on: edit your files and the browser will refresh")
         }
-        #else
-        if hotReload {
-            print("Hot reload is not available on this platform; refresh manually after changes")
-        }
-        #endif
 
         // Block until the process is interrupted. The default disposition
         // of SIGINT and SIGTERM terminates the process, which stops the
@@ -84,7 +77,6 @@ struct ServeSiteStep: BuildStep {
         DispatchSemaphore(value: 0).wait()
     }
 
-    #if os(macOS) || os(iOS)
     /// Starts watching the site's root and, when a watched file changes,
     /// rebuilds the site in place and tells the browsers to reload.
     ///
@@ -96,7 +88,10 @@ struct ServeSiteStep: BuildStep {
         let streams = server.eventStreams
         let gate = RebuildGate()
 
-        let watcher = FileWatcher(paths: [site.root]) { changedPaths in
+        let watcher = FileWatcher(
+            paths: [site.root],
+            excludeDirectories: [site.outputDirectory, site.root.appendingPathComponent("node_modules")]
+        ) { changedPaths in
             let relevant = changedPaths.filter { path in
                 !Self.isUnder(path: path, directory: outputDirectory)
                     && !Self.isUnder(path: path, directory: nodeModules)
@@ -115,7 +110,6 @@ struct ServeSiteStep: BuildStep {
         }
         watcher.start()
     }
-    #endif
 
     /// Whether `path` is `directory` itself or inside it.
     private static func isUnder(path: String, directory: String) -> Bool {
@@ -124,14 +118,14 @@ struct ServeSiteStep: BuildStep {
 }
 
 /// Remembers when the last rebuild began so the hot-reload handler can tell
-/// a real file change from a spurious FSEvents event.
+/// a real file change from a spurious event.
 ///
-/// FSEvents reports a file as changed when it is merely *read* by the build
-/// (the copy step and the CSS command both read the source files), even
-/// though the file was not modified. Without this check, each rebuild reads
-/// the source files, FSEvents reports them, and the site rebuilds forever.
-/// A file only counts as changed if it was modified after the last rebuild
-/// began, or if it no longer exists (deleted or renamed).
+/// The watcher reports a file as changed even when it is merely *read* by
+/// the build (the copy step and the CSS command both read the source files),
+/// even though the file was not modified. Without this check, each rebuild
+/// reads the source files, the watcher reports them, and the site rebuilds
+/// forever. A file only counts as changed if it was modified after the last
+/// rebuild began, or if it no longer exists (deleted or renamed).
 private final class RebuildGate: @unchecked Sendable {
     /// The moment the last rebuild began, or the watcher started.
     private var lastRebuildStarted = Date()

@@ -32,14 +32,16 @@ Calgary/
 │   │   │   ├── MinifyStep.swift              # strip comments/whitespace from HTML and CSS
 │   │   │   ├── RenderPagesStep.swift         # frontmatter + engine + markdown → HTML
 │   │   │   ├── SitemapStep.swift             # write sitemap.xml (loc, lastmod, hreflang)
-│   │   │   ├── OpenSiteStep.swift            # opens a built page (Apple platforms)
+│   │   │   ├── OpenSiteStep.swift            # opens a built page in the default browser
 │   │   │   └── ServeSiteStep.swift           # serve the site over HTTP (hot reload)
 │   │   ├── Support/                          # abstractions over system capabilities
 │   │   │   ├── FileSystem.swift              # file-system protocol + local implementation
 │   │   │   ├── CommandRunner.swift           # command-execution protocol + Process implementation
 │   │   │   ├── Platform.swift                # the platform a build runs on (macOS/Linux/Windows)
 │   │   │   ├── Glob.swift                    # glob matching for file paths
-│   │   │   ├── FileWatcher.swift             # FSEvents-based file watching
+│   │   │   ├── FileWatcher.swift             # file watching (FSEvents on Apple platforms)
+│   │   │   ├── PollingFileWatcher.swift      # file watching (polling, non-Apple platforms)
+│   │   │   ├── BrowserOpener.swift           # open a URL in the default browser
 │   │   │   └── StaticFileServer.swift        # HTTP server for the serve step
 │   │   ├── Minify/
 │   │   │   ├── HTMLMinifier.swift            # comments/whitespace; raw elements untouched
@@ -84,7 +86,8 @@ Calgary/
         ├── InMemoryFileSystem.swift          # in-memory FileSystem for tests
         ├── MockCommandRunner.swift           # scripted CommandRunner for tests
         ├── ProcessCommandRunnerTests.swift   # real-runner tests (echo/sh/pwd, no file writes; non-Windows)
-        └── ProcessCommandRunnerWindowsTests.swift  # real-runner tests on Windows (cmd, .cmd shims)
+        ├── ProcessCommandRunnerWindowsTests.swift  # real-runner tests on Windows (cmd, .cmd shims)
+        └── PollingFileWatcherTests.swift    # polling-watcher tests (every platform)
 ```
 
 ## Content model
@@ -269,12 +272,17 @@ Deliberately **no** Stencil/Handlebars: a custom engine with interpolation, incl
 
 ## Current state (2026-11-24)
 
-The serve step and the hot-reload watcher are NIO-based: cross-platform
-(macOS, Linux, Windows) for file serving; hot reload still degrades
-gracefully off Apple platforms. `ServeSiteStepTests` cover the serve step
-(including a Windows data-path test); the hot-reload watcher is covered by
-`FileWatcherTests` on Apple hosts. `StaticFileServer.stop()` deliberately
-does not wait on the NIO group shutdown — the completion rides libdispatch,
+The serve step and the hot-reload watcher are cross-platform: file serving
+is NIO-based (macOS, Linux, Windows) and hot reload is available everywhere —
+FSEvents on Apple platforms, a polling watcher (`PollingFileWatcher`) on every
+other platform. `ServeSiteStepTests` cover the serve step (including a
+Windows data-path test); the polling watcher is covered by
+`PollingFileWatcherTests`, which run on every host. Browser launch is
+cross-platform too: `BrowserOpener` uses `NSWorkspace` on Apple platforms
+and the site's command runner elsewhere (`cmd /c start` on Windows,
+`xdg-open` on Linux).
+
+`StaticFileServer.stop()` deliberately does not wait on the NIO group shutdown — the completion rides libdispatch,
 which can be unable to spawn worker threads on a loaded machine, and a
 synchronous wait would hang the caller (this flaked the full test suite;
 see the bug-hunt note in `Plans/migrate-static-file-server-to-swiftnio.md`).

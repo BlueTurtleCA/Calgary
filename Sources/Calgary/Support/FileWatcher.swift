@@ -13,12 +13,16 @@ import CoreServices
 /// Watches a set of directories for file changes, reporting coalesced
 /// batches of changed paths.
 ///
-/// The watcher uses FSEvents, which reports changes at the directory level.
+/// On Apple platforms the watcher uses FSEvents, which reports changes at
+/// the directory level. On every other platform it delegates to a
+/// `PollingFileWatcher`, which walks the tree on a timer.
+///
 /// Changed paths are accumulated on the watcher's serial queue and delivered
 /// to `onChange` at most once per debounce interval, so a burst of changes
 /// (for example, a file save) produces a single callback. `onChange` runs on
 /// that same queue, so successive calls never overlap.
 final class FileWatcher: @unchecked Sendable {
+    #if os(macOS) || os(iOS)
     /// The directories to watch.
     private let paths: [URL]
 
@@ -37,10 +41,8 @@ final class FileWatcher: @unchecked Sendable {
     /// The scheduled delivery of the pending paths, if any.
     private var pendingWork: DispatchWorkItem?
 
-    #if os(macOS) || os(iOS)
     private var stream: FSEventStreamRef?
     private var contextInfo: UnsafeMutableRawPointer?
-    #endif
 
     /// Creates a watcher.
     ///
@@ -48,21 +50,24 @@ final class FileWatcher: @unchecked Sendable {
     ///   - paths: The directories to watch.
     ///   - debounce: The interval between the last change and the delivery
     ///     of the batch. Defaults to 0.25 seconds.
+    ///   - excludeDirectories: Not used on Apple platforms; the excluded
+    ///     directories are filtered by the change callback instead.
     ///   - onChange: Called on the watcher's queue with the paths that
     ///     changed since the last call.
     init(
         paths: [URL],
         debounce: TimeInterval = 0.25,
+        excludeDirectories: [URL] = [],
         onChange: @escaping @Sendable (Set<String>) -> Void
     ) {
         self.paths = paths
         self.debounce = debounce
         self.onChange = onChange
+        _ = excludeDirectories
     }
 
     /// Starts watching.
     func start() {
-        #if os(macOS) || os(iOS)
         guard stream == nil else { return }
 
         // The FSEvents callback can only pass an opaque pointer, so the
@@ -92,18 +97,20 @@ final class FileWatcher: @unchecked Sendable {
             FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
             0,
             flags
-        ) else { return }
+        ) else {
+            Unmanaged<FileWatcherContext>.fromOpaque(info).release()
+            contextInfo = nil
+            return
+        }
         self.stream = stream
         // The callback is invoked on the watcher's queue, so events are
         // accumulated on the same queue that runs `onChange`.
         FSEventStreamSetDispatchQueue(stream, queue)
         FSEventStreamStart(stream)
-        #endif
     }
 
     /// Stops watching and releases the FSEvents stream.
     func stop() {
-        #if os(macOS) || os(iOS)
         queue.sync {
             guard let stream else { return }
             FSEventStreamStop(stream)
@@ -115,7 +122,6 @@ final class FileWatcher: @unchecked Sendable {
                 contextInfo = nil
             }
         }
-        #endif
     }
 
     /// Accumulates a batch of changed paths and schedules its delivery.
@@ -139,7 +145,6 @@ final class FileWatcher: @unchecked Sendable {
         queue.asyncAfter(deadline: .now() + debounce, execute: work)
     }
 
-    #if os(macOS) || os(iOS)
     /// The FSEvents stream callback.
     ///
     /// FSEvents calls this on the watcher's queue with a C array of changed
@@ -156,9 +161,47 @@ final class FileWatcher: @unchecked Sendable {
         }
         context.watcher.handle(changedPaths: changed)
     }
+    #else
+    /// The watcher, used on platforms without FSEvents.
+    private let polling: PollingFileWatcher
+
+    /// Creates a watcher.
+    ///
+    /// - Parameters:
+    ///   - paths: The directories to watch.
+    ///   - debounce: The interval between the last change and the delivery
+    ///     of the batch. Defaults to 0.25 seconds.
+    ///   - excludeDirectories: The directories skipped while walking.
+    ///     Defaults to an empty list.
+    ///   - onChange: Called on the watcher's queue with the paths that
+    ///     changed since the last call.
+    init(
+        paths: [URL],
+        debounce: TimeInterval = 0.25,
+        excludeDirectories: [URL] = [],
+        onChange: @escaping @Sendable (Set<String>) -> Void
+    ) {
+        polling = PollingFileWatcher(
+            paths: paths,
+            debounce: debounce,
+            excludeDirectories: excludeDirectories,
+            onChange: onChange
+        )
+    }
+
+    /// Starts watching.
+    func start() {
+        polling.start()
+    }
+
+    /// Stops watching.
+    func stop() {
+        polling.stop()
+    }
     #endif
 }
 
+#if os(macOS) || os(iOS)
 /// Carries a reference to the watcher into the FSEvents callback, which can
 /// only pass an opaque pointer.
 private final class FileWatcherContext {
@@ -168,3 +211,4 @@ private final class FileWatcherContext {
         self.watcher = watcher
     }
 }
+#endif
