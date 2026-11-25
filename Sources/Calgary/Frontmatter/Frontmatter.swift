@@ -80,8 +80,9 @@ enum Frontmatter {
     /// frontmatter is optional. When present, it may declare a `date` and a
     /// `variables` map, but not a `template`.
     static func parseHTML(_ text: String) throws -> Page {
+        let text = normalizeLineEndings(text)
         let lines = text.components(separatedBy: "\n")
-        guard let first = lines.first, first.trimmingCharacters(in: .whitespaces) == "---" else {
+        guard let first = lines.first, first.trimmingCharacters(in: .whitespacesAndNewlines) == "---" else {
             return Page(template: nil, date: nil, slug: nil, variables: Variables([:]), body: text)
         }
         let (yaml, body) = try split(text)
@@ -145,14 +146,17 @@ enum Frontmatter {
     }
 
     /// Splits `text` into its YAML frontmatter and body.
+    ///
+    /// Windows line endings (`\r\n`) are treated as `\n`, so a file checked
+    /// out with CRLF endings parses identically to one with LF endings.
     static func split(_ text: String) throws -> (yaml: String, body: String) {
-        let lines = text.components(separatedBy: "\n")
-        guard let first = lines.first, first.trimmingCharacters(in: .whitespaces) == "---" else {
+        let lines = normalizeLineEndings(text).components(separatedBy: "\n")
+        guard let first = lines.first, first.trimmingCharacters(in: .whitespacesAndNewlines) == "---" else {
             throw FrontmatterError.missingOpeningDelimiter
         }
         var closingIndex: Int?
         for (index, line) in lines.enumerated() where index > 0 {
-            if line.trimmingCharacters(in: .whitespaces) == "---" {
+            if line.trimmingCharacters(in: .whitespacesAndNewlines) == "---" {
                 closingIndex = index
                 break
             }
@@ -163,6 +167,11 @@ enum Frontmatter {
         let yaml = lines[1..<closing].joined(separator: "\n")
         let body = lines[(closing + 1)...].joined(separator: "\n")
         return (yaml, body)
+    }
+
+    /// Converts Windows line endings (`\r\n`) in `text` to `\n`.
+    private static func normalizeLineEndings(_ text: String) -> String {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
     }
 
     /// Converts a YAML node into a variable value.

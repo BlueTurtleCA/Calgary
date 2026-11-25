@@ -74,6 +74,36 @@ struct RenderPagesStepTests {
         #expect(output?.contains("<p>Hi, welcome to Hello!</p>") == true)
     }
 
+    @Test("Renders a page with Windows line endings")
+    func rendersPageWithCRLFLineEndings() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedMinimalSite(fileSystem: fileSystem)
+        // A page checked out with CRLF endings on Windows.
+        try writeFile(
+            "---\r\n"
+            + "template: home\r\n"
+            + "variables:\r\n"
+            + "  title: A Post\r\n"
+            + "---\r\n"
+            + "\r\n"
+            + "A post.\r\n",
+            at: "content/crlf.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .registerTemplates(in: "templates")
+            .registerComponents(in: "components")
+            .renderPages()
+
+        try site.build()
+
+        let output = try readFile(at: "build/crlf/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(output?.contains("<title>A Post</title>") == true)
+        #expect(output?.contains("<p>A post.</p>") == true)
+    }
+
     @Test("Mirrors the source path in the output")
     func mirrorsSourcePathInOutput() throws {
         let fileSystem = InMemoryFileSystem()

@@ -222,4 +222,40 @@ struct FrontmatterTests {
             try Frontmatter.parseHTML("---\ntemplate: home\n---\n<html></html>")
         }
     }
+
+    @Test("Parses a page with Windows line endings")
+    func parsesCRLFLineEndings() throws {
+        let page = try Frontmatter.parse(
+            "---\r\n"
+            + "template: home\r\n"
+            + "date: 2026-01-01\r\n"
+            + "variables:\r\n"
+            + "  title: Blue Turtle Canada\r\n"
+            + "---\r\n"
+            + "\r\n"
+            + "Hi, welcome to {{ title }}!\r\n"
+        )
+
+        #expect(page.template == "home")
+        #expect(page.date == "2026-01-01")
+        #expect(page.variables["title"] == .string("Blue Turtle Canada"))
+        #expect(page.body == "\nHi, welcome to {{ title }}!\n")
+    }
+
+    @Test("Parses an HTML page's frontmatter with Windows line endings")
+    func parsesCRLFHTMLPage() throws {
+        let page = try Frontmatter.parseHTML(
+            "---\r\n"
+            + "date: 2026-01-01\r\n"
+            + "variables:\r\n"
+            + "  title: Hello\r\n"
+            + "---\r\n"
+            + "<html><body>{{ title }}</body></html>\r\n"
+        )
+
+        #expect(page.template == nil)
+        #expect(page.date == "2026-01-01")
+        #expect(page.variables["title"] == .string("Hello"))
+        #expect(page.body == "<html><body>{{ title }}</body></html>\n")
+    }
 }
