@@ -1695,13 +1695,33 @@ struct RenderPagesStepTests {
         }
     }
 
-    @Test("A localized collection lists the default-locale pages only")
-    func localizedCollectionListsDefaultLocalePagesOnly() throws {
+    @Test("A localized collection lists the locale's pages in that locale")
+    func localizedCollectionListsLocalePagesForItsLocale() throws {
         let fileSystem = InMemoryFileSystem()
         try seedCollectionSite(fileSystem: fileSystem)
         try writeFile(
             "---\ndate: 2026-01-01\ntitle: Premier\n---\n\nPremier.",
             at: "content/blog/first.fr-fr.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            """
+            <html><head><title>{{ title }}</title></head><body>{{ content }}</body></html>
+            """,
+            at: "templates/home.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "---\ntemplate: home\ntitle: Home\n---\n\n{% for post in site.blog %}{{ post.title }} {{ post.url }};{% endfor %}",
+            at: "content/index.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "---\ntemplate: home\ntitle: Accueil\n---\n\n{% for post in site.blog %}{{ post.title }} {{ post.url }};{% endfor %}",
+            at: "content/index.fr-fr.md",
             relativeTo: virtualRoot,
             in: fileSystem
         )
@@ -1716,11 +1736,153 @@ struct RenderPagesStepTests {
 
         // The translation renders as an ordinary page…
         #expect(try readFile(at: "build/fr-fr/blog/first/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
-        // …but the collection lists the default-locale page only, and the
-        // missing translation is not warned about.
-        let index = try readFile(at: "build/blog/index.html", relativeTo: virtualRoot, in: fileSystem)
-        #expect(index?.contains("/blog/first") == true)
-        #expect(index?.contains("fr-fr") == false)
+        // …the default-locale home lists the default-locale posts only…
+        let englishHome = try readFile(at: "build/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(englishHome?.contains("Second /blog/second;First /blog/first;") == true)
+        #expect(englishHome?.contains("Premier") == false)
+        // …and the French home lists the French posts, with French URLs.
+        let frenchHome = try readFile(at: "build/fr-fr/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(frenchHome?.contains("Premier /fr-fr/blog/first;") == true)
+        #expect(frenchHome?.contains("Second") == false)
+        #expect(frenchHome?.contains("First /blog/first") == false)
+        #expect(site.warnings.isEmpty)
+    }
+
+    @Test("Renders the collection's index per locale with hreflang alternates")
+    func rendersLocalizedIndexWithAlternates() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+        try writeFile(
+            "---\ndate: 2026-01-01\ntitle: Premier\n---\n\nPremier.",
+            at: "content/blog/first.fr-fr.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            """
+            <html><head>{{ page.alternates }}</head><body>{% for post in items %}{{ post.title }} {{ post.url }};{% endfor %}</body></html>
+            """,
+            at: "templates/blog-index.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .localize(defaultLocale: "en", locales: ["fr-fr"])
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index")
+            .renderPages()
+
+        try site.build()
+
+        // The French index lists the French post with its French URL…
+        let french = try readFile(at: "build/fr-fr/blog/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(french?.contains("Premier /fr-fr/blog/first;") == true)
+        #expect(french?.contains("Second") == false)
+        // …and both indexes emit hreflang alternates for both locales and
+        // x-default.
+        #expect(french?.contains("<link rel=\"alternate\" hreflang=\"en\" href=\"/blog\">") == true)
+        #expect(french?.contains("<link rel=\"alternate\" hreflang=\"fr-fr\" href=\"/fr-fr/blog\">") == true)
+        #expect(french?.contains("<link rel=\"alternate\" hreflang=\"x-default\" href=\"/blog\">") == true)
+
+        let english = try readFile(at: "build/blog/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(english?.contains("<link rel=\"alternate\" hreflang=\"en\" href=\"/blog\">") == true)
+        #expect(english?.contains("<link rel=\"alternate\" hreflang=\"fr-fr\" href=\"/fr-fr/blog\">") == true)
+        #expect(english?.contains("<link rel=\"alternate\" hreflang=\"x-default\" href=\"/blog\">") == true)
+        #expect(site.warnings.isEmpty)
+    }
+
+    @Test("Skips a localized index when the locale has no posts, with a warning")
+    func skipsEmptyLocalizedIndexWithWarning() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+
+        let site = makeSite(fileSystem: fileSystem)
+            .localize(defaultLocale: "en", locales: ["fr-fr"])
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index")
+            .renderPages()
+
+        try site.build()
+
+        #expect(try readFile(at: "build/blog/index.html", relativeTo: virtualRoot, in: fileSystem) != nil)
+        #expect(try readFile(at: "build/fr-fr/blog/index.html", relativeTo: virtualRoot, in: fileSystem) == nil)
+        #expect(site.warnings == [
+            "no 'fr-fr' translations of the 'blog' collection; 'fr-fr/blog/index.html' not rendered"
+        ])
+    }
+
+    @Test("Paginates a localized index per locale")
+    func paginatesLocalizedIndexPerLocale() throws {
+        let fileSystem = InMemoryFileSystem()
+        try seedCollectionSite(fileSystem: fileSystem)
+        try writeFile(
+            "---\ndate: 2026-01-03\ntitle: Third\n---\n\nThird.",
+            at: "content/blog/third.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "---\ndate: 2026-01-03\ntitle: Troisième\n---\n\nTroisième.",
+            at: "content/blog/third.fr-fr.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "---\ndate: 2026-01-02\ntitle: Deuxième\n---\n\nSecond.",
+            at: "content/blog/second.fr-fr.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            "---\ndate: 2026-01-01\ntitle: Premier\n---\n\nFirst.",
+            at: "content/blog/first.fr-fr.md",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+        try writeFile(
+            """
+            <html><body>
+            {% for post in items %}{{ post.title }}{% endfor %}
+            {% if hasPrevious %}prev:{{ previousUrl }}{% endif %}
+            {% if hasNext %}next:{{ nextUrl }}{% endif %}
+            </body></html>
+            """,
+            at: "templates/blog-index.html",
+            relativeTo: virtualRoot,
+            in: fileSystem
+        )
+
+        let site = makeSite(fileSystem: fileSystem)
+            .localize(defaultLocale: "en", locales: ["fr-fr"])
+            .registerTemplates(in: "templates")
+            .addCollection(name: "blog", source: "blog", template: "post", index: "blog-index", paginate: 2)
+            .renderPages()
+
+        try site.build()
+
+        // Three French posts, two per page.
+        let page1 = try readFile(at: "build/fr-fr/blog/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(page1?.contains("TroisièmeDeuxième") == true)
+        #expect(page1?.contains("next:/fr-fr/blog/page/2") == true)
+        #expect(page1?.contains("prev:") == false)
+
+        let page2 = try readFile(at: "build/fr-fr/blog/page/2/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(page2?.contains("Premier") == true)
+        #expect(page2?.contains("prev:/fr-fr/blog") == true)
+        #expect(page2?.contains("next:") == false)
+
+        #expect(try readFile(at: "build/fr-fr/blog/page/3/index.html", relativeTo: virtualRoot, in: fileSystem) == nil)
+
+        // The default-locale index paginates separately, with unprefixed URLs.
+        let englishPage1 = try readFile(at: "build/blog/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(englishPage1?.contains("ThirdSecond") == true)
+        #expect(englishPage1?.contains("next:/blog/page/2") == true)
+
+        let englishPage2 = try readFile(at: "build/blog/page/2/index.html", relativeTo: virtualRoot, in: fileSystem)
+        #expect(englishPage2?.contains("First") == true)
+        #expect(englishPage2?.contains("prev:/blog") == true)
+
         #expect(site.warnings.isEmpty)
     }
 }

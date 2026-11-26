@@ -358,6 +358,16 @@ public final class Site: @unchecked Sendable {
     ///   `<output>/<source>/page/2/index.html`, and so on, each listing `n`
     ///   pages.
     ///
+    /// When the site is localized, the collection's pages are exposed to
+    /// templates in the current page's locale only — `{{ site.<name> }}` on an
+    /// `fr-fr` page lists the French translations of the collection's pages,
+    /// each carrying its French `url`. The index renders for every declared
+    /// locale that has at least one translated page
+    /// (`<output>/<locale>/<source>/index.html`, `…/page/2/index.html`, …), so
+    /// a locale with no translations is skipped with a warning. A missing
+    /// translation of a collection page is never warned about (a blog does not
+    /// translate every post).
+    ///
     /// The collection's pages are exposed to every template as
     /// `{{ site.<name> }}`: a list sorted by `date` descending (pages without
     /// a `date` last), each entry carrying the page's `title`, `url`,
@@ -367,7 +377,9 @@ public final class Site: @unchecked Sendable {
     /// The index template renders with the pagination variables `items` (the
     /// pages on this page), `total`, `count`, `number`, `pageCount`,
     /// `hasPrevious`, `hasNext`, and (when present) `previousUrl` and
-    /// `nextUrl`, plus the usual `site` and `page` built-ins.
+    /// `nextUrl`, plus the usual `site` and `page` built-ins. The index's
+    /// `page.url`, `page.canonical`, `page.alternates`, and pagination URLs
+    /// are locale-prefixed, and `page.locale` is the index's locale.
     ///
     /// A site can have several collections (a blog and a gallery, for
     /// example); each is exposed under its own name and renders its index

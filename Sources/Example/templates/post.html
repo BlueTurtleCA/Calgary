@@ -17,7 +17,7 @@
             {% if description %}<p class="mt-4 text-slate-600">{{ description }}</p>{% endif %}
             {{ content }}
         </article>
-        <p class="mt-8"><a href="/blog" class="text-slate-500 underline">← All posts</a></p>
+        {% if page.locale == site.defaultLocale %}<p class="mt-8"><a href="/blog" class="text-slate-500 underline">← {{ strings.blog.allPosts }}</a></p>{% else %}<p class="mt-8"><a href="/{{ page.locale }}/blog" class="text-slate-500 underline">← {{ strings.blog.allPosts }}</a></p>{% endif %}
     </main>
     {% include "components/footer" %}
 </body>

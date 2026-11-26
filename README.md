@@ -172,7 +172,7 @@ let site = Site(name: "My Site", source: "content", output: "build")
 - The collection's pages are exposed to every template as `{{ site.<name> }}` (here, `{{ site.blog }}`), sorted by `date` descending (undated pages last), each entry carrying the page's `title`, `url`, `locale`, `date`, and every frontmatter variable — so the index can show a post's `description` without extra plumbing.
 - A site can have several collections (a blog and a gallery, for example); each is exposed under its own name and renders its index under its own directory. Collection names must be unique and must not collide with a built-in `site` variable.
 - There cannot be a page at the collection's root (`content/blog/index.md`): the generated index owns that path.
-- When the site is localized, a collection lists the default-locale pages only, and a missing translation of a collection page is not warned about.
+- When the site is localized, the collection lists the pages of the current locale: `{{ site.<name> }}` on an `fr-fr` page shows the French translations of the posts, each with its French `url`. The index renders once per declared locale that has at least one translated page — `build/fr-fr/blog/index.html` and its pagination pages — with the locale's items, locale-prefixed `page.url`/`page.canonical`/`page.alternates`/pagination URLs, the locale's strings, and `page.locale` set; a locale with no translated pages is skipped with a warning. A missing translation of a collection page itself is not warned about (a blog does not translate every post).
 
 ## Localization
 

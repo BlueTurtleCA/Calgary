@@ -3,3 +3,9 @@ hero:
 footer:
   builtWith: Built with Calgary.
   copyright: Copyright {{ site.year }} Blue Turtle Canada. All rights reserved.
+blog:
+  heading: Blog
+  empty: No posts yet.
+  newer: ← Newer
+  older: Older →
+  allPosts: All posts
