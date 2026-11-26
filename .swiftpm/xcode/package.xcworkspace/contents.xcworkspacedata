@@ -4,8 +4,4 @@
    <FileRef
       location = "self:">
    </FileRef>
-   <FileSystemSynchronizedGroup
-      location = "group:tmp"
-      name = "tmp">
-   </FileSystemSynchronizedGroup>
 </Workspace>
